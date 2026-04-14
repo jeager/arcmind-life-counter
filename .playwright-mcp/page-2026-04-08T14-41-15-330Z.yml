@@ -1,0 +1,32 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]: MULTIPLAYER — COMMANDER DAMAGE PREVIEW
+  - generic [ref=e4]:
+    - generic [ref=e7]:
+      - generic [ref=e8]: "40"
+      - generic [ref=e9]: P1
+    - generic [ref=e10]:
+      - generic [ref=e11]: "40"
+      - generic [ref=e12]: P2
+    - generic [ref=e13]:
+      - generic [ref=e14]: "40"
+      - generic [ref=e15]: P3
+    - generic [ref=e16]:
+      - generic [ref=e17]: "40"
+      - generic [ref=e18]: P4
+    - generic [ref=e22]: 70%
+    - generic [ref=e23] [cursor=pointer]: "0"
+    - generic [ref=e24] [cursor=pointer]: "0"
+    - generic [ref=e25] [cursor=pointer]: "0"
+    - generic [ref=e26] [cursor=pointer]: "7"
+    - generic [ref=e27] [cursor=pointer]: "0"
+    - generic [ref=e28] [cursor=pointer]: "0"
+    - generic [ref=e29] [cursor=pointer]: "0"
+    - generic [ref=e30] [cursor=pointer]: "0"
+    - generic [ref=e31] [cursor=pointer]: "0"
+    - generic [ref=e32] [cursor=pointer]: "0"
+    - generic [ref=e33] [cursor=pointer]: "0"
+    - generic [ref=e34] [cursor=pointer]: "0"
+  - generic [ref=e35]:
+    - text: Circles show incoming commander damage per opponent.
+    - text: Touch to select (glows), knob adjusts — deducts from life total.
+    - text: P1's purple circle is selected with 7 dmg dealt.

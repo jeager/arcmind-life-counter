@@ -1,0 +1,37 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]: Main Screen — 1v1 with Cmd Damage
+    - generic [ref=e5]:
+      - generic [ref=e9]: 70%
+      - generic [ref=e10]: "40"
+      - generic [ref=e11]:
+        - generic [ref=e12] [cursor=pointer]:
+          - generic [ref=e13]: "7"
+          - generic [ref=e14]: cmdr 1
+        - generic [ref=e15] [cursor=pointer]:
+          - generic [ref=e16]: "0"
+          - generic [ref=e17]: cmdr 2
+    - generic [ref=e20]:
+      - strong [ref=e21]: Cmd 1
+      - text: selected (glowing) showing 7 damage.
+      - text: Tap to select, knob adjusts — deducts from your life.
+      - strong [ref=e22]: Cmd 2
+      - text: for partner commanders.
+  - generic [ref=e23]:
+    - generic [ref=e24]: Updated Menu — d20 & Cmd.dmg removed
+    - generic [ref=e26]:
+      - generic [ref=e27]: "40"
+      - generic [ref=e29]:
+        - generic [ref=e30]: reset
+        - generic [ref=e31]: back
+        - generic [ref=e32]:
+          - generic [ref=e33]: multiplayer
+          - generic [ref=e34]: timer
+          - generic [ref=e35]: settings
+    - generic [ref=e36]:
+      - strong [ref=e37]: d20
+      - text: and
+      - strong [ref=e38]: Cmd.dmg
+      - text: removed.
+      - text: Commander damage is now always visible on the main screen.
+      - text: Settings kept for brightness control.

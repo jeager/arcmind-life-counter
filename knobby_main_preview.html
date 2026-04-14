@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0c0c1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 36px 24px 48px;
+    font-family: 'Segoe UI', sans-serif;
+  }
+
+  h1 {
+    color: #C4B5FD;
+    font-size: 13px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 32px;
+    opacity: 0.7;
+  }
+
+  .screens-row {
+    display: flex;
+    gap: 32px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .section { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .section-label {
+    color: #7A6F99; font-size: 10px; letter-spacing: 2px;
+    text-transform: uppercase; margin-bottom: 2px;
+  }
+
+  /* DISPLAY SHELL */
+  .display-wrap {
+    width: 360px; height: 360px;
+    border-radius: 50%; overflow: hidden;
+    position: relative;
+    box-shadow: 0 0 36px rgba(139,92,246,0.35), 0 0 70px rgba(139,92,246,0.1);
+    border: 2px solid #4C1D95;
+    flex-shrink: 0;
+  }
+  .display {
+    width: 360px; height: 360px;
+    background: #0A0518;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* BATTERY */
+  .batt-bg {
+    position: absolute;
+    top: 10px; left: 50%; transform: translateX(-50%);
+    width: 84px; height: 34px;
+    background: #0D0B1A; border: 1px solid #4C1D95; border-radius: 6px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    z-index: 2;
+  }
+  .batt-bar { width: 62px; height: 10px; background: #1E1B3A; border: 1px solid #7A6F99; border-radius: 3px; padding: 2px; }
+  .batt-fill { height: 100%; background: #8B5CF6; border-radius: 2px; }
+  .batt-text { font-size: 10px; color: #C4B5FD; font-family: monospace; }
+
+  /* LIFE TOTAL */
+  .life-big {
+    position: absolute;
+    left: 50%; top: 116px; transform: translateX(-50%);
+    font-size: 92px; font-weight: 900;
+    color: #8B5CF6;
+    text-shadow: 0 0 28px rgba(139,92,246,0.55);
+    line-height: 1;
+    font-family: 'Courier New', monospace;
+    letter-spacing: -4px;
+    white-space: nowrap;
+  }
+
+  /* CMD CIRCLES — MAIN SCREEN (3 circles, 32px, gap 18px) */
+  .cmd-row-main {
+    position: absolute;
+    top: 256px;
+    left: 50%; transform: translateX(-50%);
+    display: flex; gap: 18px; align-items: flex-start;
+  }
+  .cmd-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .cmd-c {
+    width: 32px; height: 32px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: bold;
+  }
+  .cmd-c.p2 { background: rgba(79,195,247,0.2);  border: 1.5px solid #4FC3F7; color: #4FC3F7; }
+  .cmd-c.p3 { background: rgba(255,234,97,0.2);  border: 1.5px solid #FFEA61; color: #FFEA61; }
+  .cmd-c.p4 { background: rgba(200,230,201,0.2); border: 1.5px solid #C8E6C9; color: #C8E6C9; }
+  .cmd-c.sel { border-width: 3px; filter: brightness(1.4); box-shadow: 0 0 9px currentColor; }
+  .cmd-lbl { font-size: 9px; color: #7A6F99; letter-spacing: 0.5px; }
+
+  /* MENU BUTTON */
+  .menu-btn {
+    position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+    width: 34px; height: 34px; border-radius: 50%;
+    background: #000; border: 2px solid #6E6E6E;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .menu-dot { width: 8px; height: 8px; border-radius: 50%; background: white; }
+
+  /* MENU OVERLAY */
+  .menu-overlay {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.52);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .menu-outer { position: relative; }
+  .menu-panel {
+    width: 230px; height: 230px; border-radius: 50%;
+    background: #13111F; border: 2px solid #4C1D95;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px;
+  }
+  .menu-item {
+    width: 150px; height: 34px;
+    background: #1E1B3A; border: 1px solid #4C1D95; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; color: #C4B5FD; letter-spacing: 1px;
+  }
+  .side-btn {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 46px; height: 46px; border-radius: 50%;
+    background: #1A1630; border: 1px solid #4C1D95;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: #B0A3D4;
+  }
+  .side-btn.left  { right: calc(100% + 12px); }
+  .side-btn.right { left:  calc(100% + 12px); }
+
+  /* MULTIPLAYER QUADRANTS */
+  .div-h { position: absolute; left: 0; right: 0; top: 180px; height: 1px; background: rgba(76,29,149,0.45); }
+  .div-v { position: absolute; top: 0; bottom: 0; left: 180px; width: 1px; background: rgba(76,29,149,0.45); }
+
+  .quad { position: absolute; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .q0 { top:0; left:0; width:180px; height:180px; }
+  .q1 { top:0; left:180px; width:180px; height:180px; }
+  .q2 { top:180px; left:180px; width:180px; height:180px; }
+  .q3 { top:180px; left:0; width:180px; height:180px; }
+
+  .mp-life { font-size: 38px; font-weight: bold; line-height: 1; text-shadow: 0 0 12px currentColor; }
+  .mp-name { font-size: 11px; margin-top: 4px; opacity: 0.85; letter-spacing: 1px; }
+  .q0 .mp-life, .q0 .mp-name { color: #9C4DFF; }
+  .q1 .mp-life, .q1 .mp-name { color: #4FC3F7; }
+  .q2 .mp-life, .q2 .mp-name { color: #FFEA61; }
+  .q3 .mp-life, .q3 .mp-name { color: #C8E6C9; }
+
+  /* MULTIPLAYER CMD CIRCLES — 34px, 10px gap = 44px center-to-center
+     Top row y=128: bottom edge at 162, 18px above center line (180)
+     Bottom row y=198: top edge at 198, 18px below center line
+     Left half centers: x=46,90,134  Right half: x=226,270,314
+     Max corner dist from display center: 159.7px (safe, radius=180) */
+  .mc {
+    position: absolute; width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: bold; border: 1.5px solid;
+  }
+  /* P0 victims (top-left), top row */
+  .p0v-0 { left:29px;  top:128px; background:rgba(79,195,247,.22); border-color:#4FC3F7; color:#4FC3F7; }
+  .p0v-1 { left:73px;  top:128px; background:rgba(255,234,97,.22); border-color:#FFEA61; color:#FFEA61; }
+  .p0v-2 { left:117px; top:128px; background:rgba(200,230,201,.22); border-color:#C8E6C9; color:#C8E6C9; }
+  /* P1 victims (top-right), top row */
+  .p1v-0 { left:209px; top:128px; background:rgba(156,77,255,.22); border-color:#9C4DFF; color:#9C4DFF; }
+  .p1v-1 { left:253px; top:128px; background:rgba(255,234,97,.22); border-color:#FFEA61; color:#FFEA61; }
+  .p1v-2 { left:297px; top:128px; background:rgba(200,230,201,.22); border-color:#C8E6C9; color:#C8E6C9; }
+  /* P2 victims (bottom-right), bottom row */
+  .p2v-0 { left:209px; top:198px; background:rgba(156,77,255,.22); border-color:#9C4DFF; color:#9C4DFF; }
+  .p2v-1 { left:253px; top:198px; background:rgba(79,195,247,.22); border-color:#4FC3F7; color:#4FC3F7; }
+  .p2v-2 { left:297px; top:198px; background:rgba(200,230,201,.22); border-color:#C8E6C9; color:#C8E6C9; }
+  /* P3 victims (bottom-left), bottom row */
+  .p3v-0 { left:29px;  top:198px; background:rgba(156,77,255,.22); border-color:#9C4DFF; color:#9C4DFF; }
+  .p3v-1 { left:73px;  top:198px; background:rgba(79,195,247,.22); border-color:#4FC3F7; color:#4FC3F7; }
+  .p3v-2 { left:117px; top:198px; background:rgba(255,234,97,.22); border-color:#FFEA61; color:#FFEA61; }
+
+  .mc.sel { border-width: 3px; filter: brightness(1.5); box-shadow: 0 0 8px currentColor; }
+
+  /* CAPTIONS */
+  .cap {
+    font-size: 11px; color: #7A6F99; text-align: center;
+    max-width: 360px; line-height: 1.75; margin-top: 2px;
+  }
+  .cap strong { color: #C4B5FD; }
+  .cap .gone { color: #EF4444; text-decoration: line-through; opacity: 0.55; }
+</style>
+</head>
+<body>
+
+<h1>ArcMind — UI Preview</h1>
+
+<div class="screens-row">
+
+  <!-- MAIN SCREEN -->
+  <div class="section">
+    <div class="section-label">Main Screen (1v1)</div>
+    <div class="display-wrap"><div class="display">
+
+      <div class="batt-bg">
+        <div class="batt-bar"><div class="batt-fill" style="width:70%"></div></div>
+        <div class="batt-text">70%</div>
+      </div>
+
+      <div class="life-big">40</div>
+
+      <div class="cmd-row-main">
+        <div class="cmd-wrap">
+          <div class="cmd-c p2 sel">7</div>
+          <div class="cmd-lbl">P2</div>
+        </div>
+        <div class="cmd-wrap">
+          <div class="cmd-c p3">0</div>
+          <div class="cmd-lbl">P3</div>
+        </div>
+        <div class="cmd-wrap">
+          <div class="cmd-c p4">0</div>
+          <div class="cmd-lbl">P4</div>
+        </div>
+      </div>
+
+      <div class="menu-btn"><div class="menu-dot"></div></div>
+
+    </div></div>
+    <div class="cap">
+      3 circles for <strong>P2, P3, P4</strong> always visible.<br>
+      <strong>P2</strong> selected (glowing) — 7 dmg dealt.<br>
+      Knob adjusts · auto-deducts from your life total.
+    </div>
+  </div>
+
+  <!-- MULTIPLAYER SCREEN -->
+  <div class="section">
+    <div class="section-label">Multiplayer Screen</div>
+    <div class="display-wrap"><div class="display">
+
+      <div class="batt-bg">
+        <div class="batt-bar"><div class="batt-fill" style="width:70%"></div></div>
+        <div class="batt-text">70%</div>
+      </div>
+
+      <div class="div-h"></div>
+      <div class="div-v"></div>
+
+      <div class="quad q0"><div class="mp-life">40</div><div class="mp-name">P1</div></div>
+      <div class="quad q1"><div class="mp-life">40</div><div class="mp-name">P2</div></div>
+      <div class="quad q2"><div class="mp-life">40</div><div class="mp-name">P3</div></div>
+      <div class="quad q3"><div class="mp-life">40</div><div class="mp-name">P4</div></div>
+
+      <div class="mc p0v-0">0</div><div class="mc p0v-1">0</div><div class="mc p0v-2">0</div>
+      <div class="mc p1v-0 sel">7</div><div class="mc p1v-1">0</div><div class="mc p1v-2">0</div>
+      <div class="mc p2v-0">0</div><div class="mc p2v-1">0</div><div class="mc p2v-2">0</div>
+      <div class="mc p3v-0">0</div><div class="mc p3v-1">0</div><div class="mc p3v-2">0</div>
+
+    </div></div>
+    <div class="cap">
+      3 circles per quadrant — one per attacker.<br>
+      <strong>P2's</strong> purple circle selected · 7 dmg dealt.<br>
+      Top row = P1 &amp; P2 · Bottom = P3 &amp; P4.
+    </div>
+  </div>
+
+  <!-- MENU -->
+  <div class="section">
+    <div class="section-label">Main Menu</div>
+    <div class="display-wrap"><div class="display">
+
+      <div class="life-big" style="opacity:0.14">40</div>
+      <div class="cmd-row-main" style="opacity:0.14">
+        <div class="cmd-wrap"><div class="cmd-c p2">7</div><div class="cmd-lbl">P2</div></div>
+        <div class="cmd-wrap"><div class="cmd-c p3">0</div><div class="cmd-lbl">P3</div></div>
+        <div class="cmd-wrap"><div class="cmd-c p4">0</div><div class="cmd-lbl">P4</div></div>
+      </div>
+
+      <div class="menu-overlay">
+        <div class="menu-outer">
+          <div class="side-btn left">reset</div>
+          <div class="side-btn right">back</div>
+          <div class="menu-panel">
+            <div class="menu-item">multiplayer</div>
+            <div class="menu-item">timer</div>
+            <div class="menu-item">settings</div>
+          </div>
+        </div>
+      </div>
+
+    </div></div>
+    <div class="cap">
+      <span class="gone">d20</span> &nbsp;&amp;&nbsp; <span class="gone">Cmd.dmg</span> removed.<br>
+      <strong>multiplayer · timer · settings</strong> remain.<br>
+      Reset &amp; back stay as side buttons.
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

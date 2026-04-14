@@ -1,0 +1,84 @@
+- generic [active] [ref=e1]:
+  - heading "ArcMind — UI Preview" [level=1] [ref=e2]
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: Main Screen (1v1)
+      - generic [ref=e7]:
+        - generic [ref=e11]: 70%
+        - generic [ref=e12]: "40"
+        - generic [ref=e13]:
+          - generic [ref=e14]:
+            - generic [ref=e15]: "7"
+            - generic [ref=e16]: P2
+          - generic [ref=e17]:
+            - generic [ref=e18]: "0"
+            - generic [ref=e19]: P3
+          - generic [ref=e20]:
+            - generic [ref=e21]: "0"
+            - generic [ref=e22]: P4
+      - generic [ref=e25]:
+        - text: 3 circles for
+        - strong [ref=e26]: P2, P3, P4
+        - text: always visible.
+        - strong [ref=e27]: P2
+        - text: selected (glowing) — 7 dmg dealt.
+        - text: Knob adjusts · auto-deducts from your life total.
+    - generic [ref=e28]:
+      - generic [ref=e29]: Multiplayer Screen
+      - generic [ref=e31]:
+        - generic [ref=e35]: 70%
+        - generic [ref=e38]:
+          - generic [ref=e39]: "40"
+          - generic [ref=e40]: P1
+        - generic [ref=e41]:
+          - generic [ref=e42]: "40"
+          - generic [ref=e43]: P2
+        - generic [ref=e44]:
+          - generic [ref=e45]: "40"
+          - generic [ref=e46]: P3
+        - generic [ref=e47]:
+          - generic [ref=e48]: "40"
+          - generic [ref=e49]: P4
+        - generic [ref=e50]: "0"
+        - generic [ref=e51]: "0"
+        - generic [ref=e52]: "0"
+        - generic [ref=e53]: "7"
+        - generic [ref=e54]: "0"
+        - generic [ref=e55]: "0"
+        - generic [ref=e56]: "0"
+        - generic [ref=e57]: "0"
+        - generic [ref=e58]: "0"
+        - generic [ref=e59]: "0"
+        - generic [ref=e60]: "0"
+        - generic [ref=e61]: "0"
+      - generic [ref=e62]:
+        - text: 3 circles per quadrant — one per attacker.
+        - strong [ref=e63]: P2's
+        - text: purple circle selected · 7 dmg dealt.
+        - text: Top row = P1 & P2 · Bottom = P3 & P4.
+    - generic [ref=e64]:
+      - generic [ref=e65]: Main Menu
+      - generic [ref=e67]:
+        - generic [ref=e68]: "40"
+        - generic [ref=e69]:
+          - generic [ref=e70]:
+            - generic [ref=e71]: "7"
+            - generic [ref=e72]: P2
+          - generic [ref=e73]:
+            - generic [ref=e74]: "0"
+            - generic [ref=e75]: P3
+          - generic [ref=e76]:
+            - generic [ref=e77]: "0"
+            - generic [ref=e78]: P4
+        - generic [ref=e80]:
+          - generic [ref=e81]: reset
+          - generic [ref=e82]: back
+          - generic [ref=e83]:
+            - generic [ref=e84]: multiplayer
+            - generic [ref=e85]: timer
+            - generic [ref=e86]: settings
+      - generic [ref=e87]:
+        - text: d20 & Cmd.dmg removed.
+        - strong [ref=e88]: multiplayer · timer · settings
+        - text: remain.
+        - text: Reset & back stay as side buttons.
