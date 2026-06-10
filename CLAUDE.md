@@ -1,112 +1,81 @@
-# Knobby MTG Life Counter — CLAUDE.md
+# ArcMind Life Counter
 
 ## Project Overview
 
-Embedded C MTG life counter for the **JC3636K518** (Waveshare ESP32-S3 Knob Touch LCD).
-Built with Arduino CLI + LVGL 8.3. GUI-heavy, hardware-specific project with no traditional build system.
+Embedded C/C++ Magic: The Gathering life counter for the JC3636K518 /
+Waveshare ESP32-S3 Knob Touch LCD 1.8. It uses Arduino CLI, ESP32 Arduino core,
+and LVGL 8.3.11.
 
-## Hardware
+## Build And Flash
 
-| Component | Details |
-|-----------|---------|
-| CPU | ESP32-S3 @ 240 MHz |
-| Display | 1.8" IPS, 360×360, ST77916 driver (QSPI) |
-| Touch | CST816S (I2C) |
-| Input | Incremental rotary encoder (GPIO 7, 8) |
-| Backlight | PWM via LEDC on GPIO 47 |
-| Battery | ADC pin 1 (voltage monitoring) |
-
-Pin assignments are in `knobby/pincfg.h`.
-
-## Build & Flash
-
-**Prerequisites** (one-time):
 ```bash
-arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-arduino-cli lib install lvgl@8.3.11
-arduino-cli lib install ESP32_Display_Panel@1.0.0
-arduino-cli lib install ESP32_IO_Expander@1.0.1
-arduino-cli lib install esp-lib-utils@0.1.2
+make build
+make upload
 ```
 
-**Compile:**
+The equivalent compile command is:
+
 ```bash
 arduino-cli compile \
-  --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio" \
-  knobby
-```
-
-**Flash** (find port with `arduino-cli board list`):
-```bash
-arduino-cli upload \
-  --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio" \
-  -p /dev/cu.usbmodem1 \
-  knobby
+  --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,PartitionScheme=huge_app" \
+  arcmind
 ```
 
 ## Critical Constraints
 
-- **LVGL must be 8.3.x** — 8.4+ breaks the project. Do not upgrade.
-- **No WiFi/Bluetooth** — disabled at startup for power savings. Do not add wireless features without understanding power impact.
-- **PSRAM required** — display buffers live in PSRAM. Hardware config is fixed.
-- **Light sleep uses RTC8M clock** — keep `esp_sleep_pd_config(ESP_PD_DOMAIN_RTC8M, ESP_PD_OPTION_ON)` when modifying sleep code; backlight PWM (LEDC) needs it.
+- Keep LVGL pinned to 8.3.11.
+- Preserve the `huge_app` partition scheme.
+- PSRAM is required for display and canvas buffers.
+- Wi-Fi and Bluetooth are intentionally disabled.
+- Keep RTC8M powered during light sleep; LEDC backlight PWM depends on it.
+- GPIO 16, 17, and 18 conflict with QSPI display lines. Audio stays disabled
+  unless the board is rewired.
+- Do not replace queued encoder handling with direct UI calls from an ISR.
 
 ## Source Layout
 
-```
-knobby/
-├── knobby.ino          # Arduino entry point: setup(), loop(), sleep logic
-├── knob.c              # Core app logic — all GUI, screens, state (2400+ lines)
-├── knob.h              # Public API for knob.c
-├── pincfg.h            # All GPIO pin assignments
-├── lv_conf.h           # LVGL config: color depth, heap size, timing
-├── scr_st77916.h       # Display + touch init, LVGL driver registration
-├── bidi_switch_knob.c  # Rotary encoder driver (modified Espressif component)
-└── hal/                # LVGL HAL: display flush, input read, tick callbacks
+```text
+arcmind/
+  arcmind.ino          setup, loop, battery sampling, and sleep behavior
+  knob.c               UI screens, state, navigation, timers, and input
+  knob.h               public application API
+  pincfg.h             board pin assignments
+  lv_conf.h            LVGL feature and memory configuration
+  scr_st77916.h        display and touch initialization
+  bidi_switch_knob.*   rotary encoder driver
+  hal/                 LVGL hardware adapters
 ```
 
 ## Architecture
 
-- **`knob.c`** is monolithic — all screen logic and state lives here as static globals.
-- Encoder events are queued (max 8/frame) via `knob_change()` ISR → processed by `knob_process_pending()` each loop.
-- Screen transitions use a simple state machine; `handle_knob_event()` routes encoder events to the active screen.
-- LVGL timers handle UI refresh, blink effects, and auto-dim (30s inactivity → light sleep).
-- NVS (Non-Volatile Storage) persists brightness setting across reboots.
+- `knob.c` owns the application state and all LVGL screens.
+- Encoder events enter a fixed queue through `knob_change()` and are consumed
+  by `knob_process_pending()` in the Arduino loop.
+- The active LVGL screen determines how encoder events are routed.
+- The menu overlay lives on `lv_layer_top()` and is shared by single-player and
+  multiplayer modes.
+- NVS namespace `arcmind` stores brightness, auto-dim, mirror, timer duration,
+  and table layout preferences.
 
-## Screens
+## Active Screens
 
-| Screen | Purpose |
-|--------|---------|
-| `screen_intro` | Startup animation |
-| `screen_main` | Primary life counter (1v1) |
-| `screen_select` | Game mode selection |
-| `screen_damage` | Enemy/commander damage tracking |
-| `screen_settings` | Brightness control |
-| `screen_dice` | D20 roller |
-| `screen_multiplayer` | 4-player mode |
-| `screen_multiplayer_*` | Multiplayer submenus |
+- Intro
+- Single-player counter
+- Multiplayer counter
+- Multiplayer player menu
+- Player rename
+- Commander damage selection and adjustment
+- Damage-to-all adjustment
+- Settings
 
-## Life Tracking
+Legacy dice, standalone player-selection, standalone damage, and old turn
+counter screens are intentionally absent.
 
-- Range: -999 to +999
-- Default starting life: 40
-- Color coding: red (<11), yellow (11–30), green (30–40), purple (>40)
-- Commander damage: 4 separate pools per player
+## Conventions
 
-## Code Conventions
-
-- Public API: `knob_*` prefix (e.g., `knob_gui()`, `knob_read_battery_voltage()`)
-- Internal functions: `snake_case` (e.g., `build_main_screen()`, `change_life()`)
-- Constants: `UPPERCASE_WITH_UNDERSCORES`
-- LVGL callbacks: descriptive, no prefix convention enforced
-- Avoid adding global state outside `knob.c` unless hardware-specific
-
-## LVGL Usage Notes
-
-- Color depth: 16-bit RGB565 (`LV_COLOR_DEPTH 16`)
-- LVGL heap: 48 KB
-- Display refresh: 15 ms timer
-- Input polling: 30 ms
-- Display buffer: 72 rows × 360px × 2 bytes (~51 KB, in PSRAM)
-- Custom 7-segment-style digit rendering (not standard LVGL fonts)
+- Public application functions use the `knob_*` prefix for compatibility with
+  the encoder driver and existing call sites.
+- Internal functions use `snake_case`.
+- Constants use `UPPERCASE_WITH_UNDERSCORES`.
+- Keep UI changes compatible with a 360x360 circular display.
+- Run `make build` after changes to C/C++ sources or LVGL configuration.

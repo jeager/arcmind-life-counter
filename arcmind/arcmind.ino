@@ -6,9 +6,6 @@
 #include "scr_st77916.h"
 #include <lvgl.h>
 #include "hal/lv_hal.h"
-#include "SD_MMC.h"
-#include "FS.h"
-#include <sdmmc_cmd.h>
 #include "knob.h"
 
 static const int BATTERY_ADC_PIN = 1;

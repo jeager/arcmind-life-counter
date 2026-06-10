@@ -1,61 +1,97 @@
-Hi, this is a non-commercial hobby project. I'm not associated with any company.
+# ArcMind Life Counter
 
-This is the hardware I’ve used: JC3636K518 with battery, you can find it on AliExpress.
-hardware:
-1.8 inch display, resolution 360*360
-display driver: ST77916
-touch: CST816
-cpu: 240 MHz
-platform: ESP32
+ArcMind is an open-source Magic: The Gathering life counter for the
+JC3636K518 / Waveshare ESP32-S3 Knob Touch LCD 1.8.
 
-IMPORTANT: this uses LVGL library version 8.4 the newest version breaks stuff.
+## Features
 
-The one from waveshare might be identical: 
-https://www.waveshare.com/wiki/ESP32-S3-Knob-Touch-LCD-1.8 I’ve flashed their demo firmware and it works.
+- Single-player and four-player life tracking from -999 to 999
+- Commander damage tracking
+- Damage-to-all controls
+- Configurable multiplayer turn timer and first-player selection
+- Rectangular and round-table multiplayer layouts
+- Player renaming, mirrored text, brightness control, and auto-dim
+- Battery voltage estimate and persistent settings
+- Rotary encoder and touch input
 
-features/intended use:
-- life counter for Magic: the Gathering or other TCGs
+The shared menu switches modes contextually: it shows `Multiplayer` from the
+single-player screen and `1 Player` from the multiplayer screen.
 
-- life tracking from -999 to 999 with delta being shown as preview for 4 seconds
+## Hardware
 
-- commander damage for up to 4 players, damage to all players
+| Component | Details |
+| --- | --- |
+| MCU | ESP32-S3 at 240 MHz |
+| Display | 1.8-inch 360x360 IPS, ST77916 QSPI |
+| Touch | CST816S over I2C |
+| Input | Incremental rotary encoder |
+| Backlight | LEDC PWM on GPIO 47 |
+| Battery | ADC monitoring on GPIO 1 |
 
-- game timer (hours:minutes) and turn counter
+Pin assignments are defined in `arcmind/pincfg.h`.
 
-- brightness and battery guesstimate (honestly, I could use some help with that)
+## Build
 
-- d20 dice
+Install [Arduino CLI](https://docs.arduino.cc/arduino-cli/installation/), then:
 
-- cpu is back at 240 MHz to reduce glitches, testing real life battery performance right now.
-
-Full disclosure: this was programmed with the help of a generative AI because I've only started to learn how to do this.
-You're welcome to contribute, change stuff! I don't think I have the time or the skills to implement all the features that have been requested.
-
-## Building and Flashing (Work in Progress)
-
-### Using arduino-cli
-
-Install [arduino-cli](https://docs.arduino.cc/arduino-cli/installation/), then install the ESP32 core and required libraries:
-```
-arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-arduino-cli core install esp32:esp32 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+```bash
+arduino-cli core update-index \
+  --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+arduino-cli core install esp32:esp32 \
+  --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
 arduino-cli lib install lvgl@8.3.11
 arduino-cli lib install ESP32_Display_Panel@1.0.0
 arduino-cli lib install ESP32_IO_Expander@1.0.1
 arduino-cli lib install esp-lib-utils@0.1.2
 ```
 
-**Compile:**
-```
-arduino-cli compile \
-  --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio" \
-  knobby
+Build with:
+
+```bash
+make build
 ```
 
-**Flash** (replace the port with your device's port from `arduino-cli board list`):
+Or invoke Arduino CLI directly:
+
+```bash
+arduino-cli compile \
+  --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,PartitionScheme=huge_app" \
+  arcmind
 ```
-arduino-cli upload \
-  --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio" \
-  -p /dev/cu.usbmodem1 \
-  knobby
+
+Connect the device and flash it with:
+
+```bash
+make upload
 ```
+
+`make upload` checks `/dev/cu.usbmodem101` and `/dev/cu.usbmodem1101`.
+Use `arduino-cli board list` and the direct upload command for any other port.
+
+## Constraints
+
+- Use LVGL 8.3.11. Later major versions are not compatible with this code.
+- PSRAM is required for display and rotated-text buffers.
+- The `huge_app` partition scheme is required; OTA is not used.
+- Wi-Fi and Bluetooth are disabled to reduce power consumption.
+- GPIO 16, 17, and 18 are shared with the QSPI display, so audio is disabled
+  unless the hardware is rewired.
+
+## Project Layout
+
+```text
+arcmind/
+  arcmind.ino          Arduino entry point and power management
+  knob.c               Application state, UI, navigation, and input handling
+  knob.h               Public application API
+  arcmind_logo.*       Startup logo asset
+  skull.*              Eliminated-player overlay asset
+  pincfg.h             Board pin assignments
+  lv_conf.h            LVGL configuration
+  scr_st77916.h        Display and touch initialization
+  bidi_switch_knob.*   Rotary encoder driver
+  hal/                 LVGL display, input, and tick adapters
+```
+
+This is a non-commercial hobby project and is not affiliated with the hardware
+vendors or Wizards of the Coast.
