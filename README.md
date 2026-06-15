@@ -68,6 +68,22 @@ make upload
 `make upload` checks `/dev/cu.usbmodem101` and `/dev/cu.usbmodem1101`.
 Use `arduino-cli board list` and the direct upload command for any other port.
 
+## Automated Firmware Releases
+
+Every commit pushed to `main` runs
+`.github/workflows/publish-firmware.yml`. The workflow:
+
+1. builds the ESP32-S3 merged firmware image with the pinned toolchain
+2. assigns a version in the form `1.0.<run number>-<short commit SHA>`
+3. uploads the immutable firmware image to Vercel Blob
+4. replaces `firmware/life-counter/latest.json` with the new version,
+   publication timestamp, checksum, and source commit
+
+The workflow requires a GitHub Actions repository secret named
+`BLOB_READ_WRITE_TOKEN`. ArcMind reads `latest.json`, so its firmware installer
+automatically displays the version and last-updated date published by the
+workflow.
+
 ## Constraints
 
 - Use LVGL 8.3.11. Later major versions are not compatible with this code.

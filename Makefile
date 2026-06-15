@@ -1,5 +1,6 @@
 FQBN := esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,PartitionScheme=huge_app
 SKETCH := arcmind
+OUTPUT_ARG := $(if $(OUTPUT_DIR),--output-dir "$(OUTPUT_DIR)",)
 
 PORT := $(shell \
 	if [ -e /dev/cu.usbmodem101 ]; then echo /dev/cu.usbmodem101; \
@@ -9,7 +10,7 @@ PORT := $(shell \
 .PHONY: build upload
 
 build:
-	arduino-cli compile --fqbn "$(FQBN)" $(SKETCH)
+	arduino-cli compile --fqbn "$(FQBN)" $(OUTPUT_ARG) $(SKETCH)
 
 upload: _require_port
 	arduino-cli upload --fqbn "$(FQBN)" -p $(PORT) $(SKETCH)

@@ -1,0 +1,11 @@
+{
+  "name": "arcmind-life-counter-firmware",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "publish-firmware": "node scripts/publish-firmware.mjs"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.3.3"
+  }
+}
