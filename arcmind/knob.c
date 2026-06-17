@@ -1,4 +1,5 @@
 #include "knob.h"
+#include "i18n.h"
 #include "arcmind_logo.h"
 #include "skull.h"
 #include "driver/ledc.h"
@@ -15,8 +16,6 @@
 #define LIFE_MAX 999
 #define DEFAULT_LIFE_TOTAL 40
 #define DEFAULT_BRIGHTNESS_PERCENT 30
-#define BATTERY_FULL_VOLTAGE 4.18f
-#define BATTERY_EMPTY_VOLTAGE 3.35f
 #define MULTIPLAYER_COUNT 4
 #define KNOB_EVENT_QUEUE_SIZE 32
 
@@ -63,8 +62,12 @@ static lv_obj_t *menu_panel = NULL;
 static lv_obj_t *menu_button_mode = NULL;
 static lv_obj_t *label_main_battery = NULL;
 static lv_obj_t *bar_main_battery = NULL;
+static lv_obj_t *label_main_battery_charge = NULL;
+static lv_obj_t *batt_main_bg = NULL;
 static lv_obj_t *label_multiplayer_battery = NULL;
 static lv_obj_t *bar_multiplayer_battery = NULL;
+static lv_obj_t *label_multiplayer_battery_charge = NULL;
+static lv_obj_t *batt_mp_bg = NULL;
 static lv_obj_t *menu_brightness_bar = NULL;
 static lv_obj_t *menu_brightness_label = NULL;
 
@@ -96,6 +99,21 @@ static lv_obj_t *digit_box_ones = NULL;
 static lv_obj_t *label_settings_title = NULL;
 static lv_obj_t *label_settings_battery = NULL;
 static lv_obj_t *label_settings_battery_detail = NULL;
+static lv_obj_t *btn_settings_back = NULL;
+static lv_obj_t *btn_menu_reset = NULL;
+static lv_obj_t *btn_menu_back = NULL;
+static lv_obj_t *btn_menu_settings = NULL;
+static lv_obj_t *btn_menu_select_first = NULL;
+static lv_obj_t *btn_mp_menu_rename = NULL;
+static lv_obj_t *btn_mp_menu_cmd_dmg = NULL;
+static lv_obj_t *btn_mp_menu_all_dmg = NULL;
+static lv_obj_t *btn_mp_menu_back = NULL;
+static lv_obj_t *btn_mp_name_save = NULL;
+static lv_obj_t *btn_mp_name_back = NULL;
+static lv_obj_t *btn_mp_cmd_select_back = NULL;
+static lv_obj_t *btn_mp_cmd_damage_back = NULL;
+static lv_obj_t *btn_mp_all_damage_apply = NULL;
+static lv_obj_t *btn_mp_all_damage_back = NULL;
 
 // ---------- multiplayer UI ----------
 static lv_obj_t *multiplayer_quadrants[MULTIPLAYER_COUNT];
@@ -125,8 +143,11 @@ static volatile uint8_t knob_event_tail = 0;
 
 static int battery_percent = -1;
 static float battery_voltage = 0.0f;
+static float battery_voltage_prev = 0.0f;
 static uint32_t battery_sample_tick = 0;
 static bool battery_sample_valid = false;
+static bool battery_is_charging = false;
+static int battery_percent_smoothed = -1;
 static int multiplayer_life[MULTIPLAYER_COUNT] = {40, 40, 40, 40};
 static int multiplayer_selected = 0;
 static int multiplayer_menu_player = 0;
@@ -163,10 +184,14 @@ static lv_timer_t *auto_dim_timer = NULL;
 // ---------- settings fields ----------
 static bool mirror_enabled = false;
 static bool round_table_enabled = false;
-#define SETTINGS_FIELD_COUNT 5
-static int settings_selected_field = 0; // 0=brightness, 1=auto_dim, 2=mirror, 3=timer_dur, 4=table
+#define SETTINGS_FIELD_COUNT 6
+static int settings_selected_field = 0; // 0=brightness, 1=auto_dim, 2=mirror, 3=timer_dur, 4=table, 5=language
 static lv_obj_t *settings_row[SETTINGS_FIELD_COUNT] = {NULL};
+static lv_obj_t *settings_row_name[SETTINGS_FIELD_COUNT] = {NULL};
 static lv_obj_t *settings_row_value[SETTINGS_FIELD_COUNT] = {NULL};
+static const i18n_id_t settings_field_ids[SETTINGS_FIELD_COUNT] = {
+    I18N_BRIGHTNESS, I18N_AUTO_DIM, I18N_MIRROR, I18N_TIMER, I18N_TABLE, I18N_LANGUAGE
+};
 
 // ---------- multiplayer timer duration ----------
 static const uint16_t MP_TIMER_OPTIONS[] = {0, 30, 45, 60, 90, 120, 180};
@@ -237,7 +262,9 @@ static const int cmp_mp_attackers[MULTIPLAYER_COUNT][3] = {
 static lv_obj_t *canvas_cmd_mp[2][3];
 static uint8_t  *canvas_cmd_mp_buf[2][3];
 
-static const float battery_curve_voltages[] = {3.35f, 3.55f, 3.68f, 3.74f, 3.80f, 3.88f, 3.96f, 4.06f, 4.18f};
+static const float battery_curve_voltages[] = {
+    3.35f, 3.55f, 3.68f, 3.74f, 3.80f, 3.88f, 3.96f, 4.06f, 4.18f
+};
 static const int battery_curve_percentages[] = {0, 5, 12, 22, 34, 48, 64, 82, 100};
 
 static void back_to_main(void);
@@ -306,6 +333,26 @@ static int clamp_percent(int value)
     return value;
 }
 
+static void refresh_battery_ui(void);
+static int battery_percent_from_voltage(float voltage);
+static void update_battery_measurement(bool force);
+static bool battery_charging_indicated(void);
+
+#define BATT_BADGE_H 36
+#define BATT_BADGE_W 84
+#define BATT_BADGE_W_CHARGING 102
+/* Li-ion reads ~0.2V high under charge; subtract before SOC lookup */
+#define BATTERY_CHARGE_V_BIAS 0.22f
+#define BATTERY_CHARGE_PCT_CAP 99
+#define BATTERY_CHARGE_PCT_MAX_STEP 4
+
+static bool battery_charging_indicated(void)
+{
+    if (knob_usb_power_present()) return true;
+    if (!battery_sample_valid) return false;
+    return battery_is_charging;
+}
+
 static int battery_percent_from_voltage(float voltage)
 {
     size_t i;
@@ -325,6 +372,75 @@ static int battery_percent_from_voltage(float voltage)
     return 100;
 }
 
+static lv_obj_t *make_battery_charge_icon(lv_obj_t *parent, lv_obj_t *bar)
+{
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, LV_SYMBOL_CHARGE);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xFACC15), 0);
+    lv_obj_align_to(label, bar, LV_ALIGN_OUT_RIGHT_MID, 4, 0);
+    lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+    return label;
+}
+
+static void battery_layout_apply(lv_obj_t *bg, lv_obj_t *bar, lv_obj_t *charge, bool charging)
+{
+    lv_coord_t w = charging ? BATT_BADGE_W_CHARGING : BATT_BADGE_W;
+    lv_coord_t bar_x = charging ? -8 : 0;
+
+    if (bg != NULL) {
+        lv_obj_set_size(bg, w, BATT_BADGE_H);
+        lv_obj_align(bg, LV_ALIGN_TOP_MID, 0, 6);
+    }
+    if (bar != NULL) {
+        lv_obj_align(bar, LV_ALIGN_TOP_MID, bar_x, 11);
+    }
+    if (charge != NULL && bar != NULL) {
+        lv_obj_align_to(charge, bar, LV_ALIGN_OUT_RIGHT_MID, 4, 0);
+    }
+}
+
+static void battery_widgets_to_front(lv_obj_t *bg, lv_obj_t *bar, lv_obj_t *label, lv_obj_t *charge)
+{
+    if (bg != NULL) lv_obj_move_foreground(bg);
+    if (bar != NULL) lv_obj_move_foreground(bar);
+    if (label != NULL) lv_obj_move_foreground(label);
+    if (charge != NULL) lv_obj_move_foreground(charge);
+}
+
+static void update_battery_charging_state(void)
+{
+    if (battery_voltage_prev > 0.0f) {
+        if (battery_voltage > battery_voltage_prev + 0.012f) {
+            battery_is_charging = true;
+        } else if (battery_voltage < battery_voltage_prev - 0.010f) {
+            battery_is_charging = false;
+        }
+    }
+
+    battery_voltage_prev = battery_voltage;
+}
+
+static void set_battery_charge_visible(lv_obj_t *label, bool visible)
+{
+    if (label == NULL) return;
+    if (visible) lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
+    else          lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+}
+
+void knob_update_battery(void)
+{
+    static uint32_t last_tick = 0;
+    uint32_t now = lv_tick_get();
+
+    if (last_tick != 0 && lv_tick_elaps(last_tick) < 5000U) {
+        return;
+    }
+
+    last_tick = now;
+    refresh_battery_ui();
+}
+
 static void update_battery_measurement(bool force)
 {
     if (!force && battery_sample_valid && (lv_tick_elaps(battery_sample_tick) < 5000)) {
@@ -333,14 +449,48 @@ static void update_battery_measurement(bool force)
 
     battery_voltage = knob_read_battery_voltage();
     battery_sample_tick = lv_tick_get();
-    battery_sample_valid = (battery_voltage > 0.0f);
+    battery_sample_valid = (battery_voltage > 0.1f);
+    if (battery_sample_valid) {
+        update_battery_charging_state();
+    } else {
+        battery_is_charging = false;
+    }
 }
 
 static int read_battery_percent(void)
 {
+    float soc_voltage;
+    int pct;
+    bool charging;
+
     update_battery_measurement(false);
-    if (!battery_sample_valid) return -1;
-    return battery_percent_from_voltage(battery_voltage);
+    if (!battery_sample_valid) {
+        battery_percent_smoothed = -1;
+        return -1;
+    }
+
+    charging = battery_charging_indicated();
+    if (charging) {
+        soc_voltage = battery_voltage - BATTERY_CHARGE_V_BIAS;
+        if (soc_voltage < battery_curve_voltages[0]) {
+            soc_voltage = battery_curve_voltages[0];
+        }
+        pct = battery_percent_from_voltage(soc_voltage);
+        if (pct > BATTERY_CHARGE_PCT_CAP) {
+            pct = BATTERY_CHARGE_PCT_CAP;
+        }
+        if (battery_percent_smoothed >= 0 && pct > battery_percent_smoothed + BATTERY_CHARGE_PCT_MAX_STEP) {
+            pct = battery_percent_smoothed + BATTERY_CHARGE_PCT_MAX_STEP;
+        }
+    } else {
+        pct = battery_percent_from_voltage(battery_voltage);
+        if (battery_voltage >= 4.14f) {
+            pct = 100;
+        }
+    }
+
+    battery_percent_smoothed = pct;
+    return pct;
 }
 
 static void refresh_battery_ui(void)
@@ -371,27 +521,40 @@ static void refresh_battery_ui(void)
         if (bar_main_battery != NULL) {
             lv_bar_set_value(bar_main_battery, bar_val, LV_ANIM_OFF);
             lv_obj_set_style_bg_color(bar_main_battery, bar_color, LV_PART_INDICATOR);
+            lv_obj_set_style_bg_opa(bar_main_battery, LV_OPA_COVER, LV_PART_INDICATOR);
         }
         if (bar_multiplayer_battery != NULL) {
             lv_bar_set_value(bar_multiplayer_battery, bar_val, LV_ANIM_OFF);
             lv_obj_set_style_bg_color(bar_multiplayer_battery, bar_color, LV_PART_INDICATOR);
+            lv_obj_set_style_bg_opa(bar_multiplayer_battery, LV_OPA_COVER, LV_PART_INDICATOR);
+        }
+        {
+            bool charging = battery_charging_indicated();
+            battery_layout_apply(batt_main_bg, bar_main_battery, label_main_battery_charge, charging);
+            battery_layout_apply(batt_mp_bg, bar_multiplayer_battery, label_multiplayer_battery_charge, charging);
+            set_battery_charge_visible(label_main_battery_charge, charging);
+            set_battery_charge_visible(label_multiplayer_battery_charge, charging);
+            battery_widgets_to_front(batt_main_bg, bar_main_battery,
+                                     label_main_battery, label_main_battery_charge);
+            battery_widgets_to_front(batt_mp_bg, bar_multiplayer_battery,
+                                     label_multiplayer_battery, label_multiplayer_battery_charge);
         }
     }
 
     if (label_settings_battery == NULL) return;
 
     if (battery_percent < 0) {
-        lv_label_set_text(label_settings_battery, "battery  --%");
+        lv_label_set_text(label_settings_battery, i18n_get(I18N_BATTERY_UNKNOWN));
         if (label_settings_battery_detail != NULL) {
-            lv_label_set_text(label_settings_battery_detail, "no calibrated reading");
+            lv_label_set_text(label_settings_battery_detail, i18n_get(I18N_NO_CALIBRATION));
         }
         return;
     }
 
-    snprintf(buf, sizeof(buf), "battery  %d%%", battery_percent);
+    snprintf(buf, sizeof(buf), i18n_get(I18N_BATTERY_FMT), battery_percent);
     lv_label_set_text(label_settings_battery, buf);
     if (label_settings_battery_detail != NULL) {
-        snprintf(detail_buf, sizeof(detail_buf), "%.2fV calibrated", battery_voltage);
+        snprintf(detail_buf, sizeof(detail_buf), i18n_get(I18N_VOLTAGE_FMT), battery_voltage);
         lv_label_set_text(label_settings_battery_detail, detail_buf);
     }
 }
@@ -435,17 +598,21 @@ static void settings_load(void)
         int8_t mirror_val = 0;
         int8_t timer_idx_val = 0;
         int8_t table_val = 0;
+        int8_t lang_val = 0;
         nvs_get_i8(handle, "auto_dim", &dim_val);
         nvs_get_i8(handle, "brightness", &bri_val);
         nvs_get_i8(handle, "mirror", &mirror_val);
         nvs_get_i8(handle, "timer_dur", &timer_idx_val);
         nvs_get_i8(handle, "table_shape", &table_val);
+        nvs_get_i8(handle, "language", &lang_val);
         auto_dim_enabled = (dim_val != 0);
         brightness_percent = clamp_brightness(bri_val);
         mirror_enabled = (mirror_val != 0);
         if (timer_idx_val >= 0 && timer_idx_val < MP_TIMER_OPTIONS_COUNT)
             mp_timer_duration_idx = timer_idx_val;
         round_table_enabled = (table_val != 0);
+        if (lang_val >= 0 && lang_val < LANG_COUNT)
+            i18n_set_language_index(lang_val);
         nvs_close(handle);
     }
 }
@@ -460,6 +627,7 @@ static void settings_save(void)
         nvs_set_i8(handle, "mirror", mirror_enabled ? 1 : 0);
         nvs_set_i8(handle, "timer_dur", (int8_t)mp_timer_duration_idx);
         nvs_set_i8(handle, "table_shape", round_table_enabled ? 1 : 0);
+        nvs_set_i8(handle, "language", (int8_t)i18n_get_language_index());
         nvs_commit(handle);
         nvs_close(handle);
         settings_dirty = false;
@@ -510,9 +678,33 @@ static lv_obj_t *make_button(lv_obj_t *parent, const char *txt, lv_coord_t w, lv
 
     lv_obj_t *label = lv_label_create(btn);
     lv_label_set_text(label, txt);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(label, UI_FONT_14, 0);
+    lv_obj_set_style_text_opa(label, LV_OPA_COVER, 0);
     lv_obj_center(label);
 
     return btn;
+}
+
+static void set_btn_text(lv_obj_t *btn, i18n_id_t id)
+{
+    lv_obj_t *label;
+
+    if (btn == NULL) return;
+    label = lv_obj_get_child(btn, 0);
+    if (label != NULL) {
+        lv_label_set_text(label, i18n_get(id));
+        lv_obj_set_style_text_font(label, UI_FONT_14, 0);
+        lv_obj_set_style_text_opa(label, LV_OPA_COVER, 0);
+    }
+}
+
+static void style_menu_label(lv_obj_t *label)
+{
+    if (label == NULL) return;
+    lv_obj_set_style_text_color(label, lv_color_hex(0xE9E0FF), 0);
+    lv_obj_set_style_text_font(label, UI_FONT_14, 0);
+    lv_obj_set_style_text_opa(label, LV_OPA_COVER, 0);
 }
 
 static lv_obj_t *make_plain_box(lv_obj_t *parent, lv_coord_t w, lv_coord_t h)
@@ -756,6 +948,68 @@ static void refresh_main_ui()
     refresh_life_digits();
 }
 
+static void mp_timer_refresh_btn_label(void);
+static void refresh_settings_ui(void);
+static void refresh_multiplayer_menu_ui(void);
+static void refresh_multiplayer_name_ui(void);
+static void refresh_multiplayer_cmd_select_ui(void);
+static void refresh_multiplayer_cmd_damage_ui(void);
+static void refresh_multiplayer_all_damage_ui(void);
+
+static void refresh_texts_ui(void)
+{
+    int i;
+
+    if (label_settings_title != NULL)
+        lv_label_set_text(label_settings_title, i18n_get(I18N_SETTINGS));
+
+    for (i = 0; i < SETTINGS_FIELD_COUNT; i++) {
+        if (settings_row_name[i] != NULL)
+            lv_label_set_text(settings_row_name[i], i18n_get(settings_field_ids[i]));
+    }
+
+    set_btn_text(btn_settings_back, I18N_BACK);
+    set_btn_text(btn_menu_reset, I18N_RESET);
+    set_btn_text(btn_menu_back, I18N_BACK);
+    set_btn_text(btn_menu_settings, I18N_SETTINGS);
+    set_btn_text(btn_menu_select_first, I18N_SELECT_FIRST_PLAYER);
+    style_menu_label(lv_obj_get_child(menu_button_mode, 0));
+    style_menu_label(lv_obj_get_child(btn_menu_settings, 0));
+    style_menu_label(lv_obj_get_child(btn_menu_select_first, 0));
+    set_btn_text(btn_mp_menu_rename, I18N_RENAME);
+    set_btn_text(btn_mp_menu_cmd_dmg, I18N_CMD_DMG);
+    set_btn_text(btn_mp_menu_all_dmg, I18N_ALL_DMG);
+    set_btn_text(btn_mp_menu_back, I18N_BACK);
+    set_btn_text(btn_mp_name_save, I18N_SAVE);
+    set_btn_text(btn_mp_name_back, I18N_BACK);
+    set_btn_text(btn_mp_cmd_select_back, I18N_BACK);
+    set_btn_text(btn_mp_cmd_damage_back, I18N_BACK);
+    set_btn_text(btn_mp_all_damage_apply, I18N_APPLY);
+    set_btn_text(btn_mp_all_damage_back, I18N_BACK);
+
+    if (label_multiplayer_cmd_damage_hint != NULL)
+        lv_label_set_text(label_multiplayer_cmd_damage_hint, i18n_get(I18N_CMD_DAMAGE_HINT));
+    if (label_multiplayer_all_damage_hint != NULL)
+        lv_label_set_text(label_multiplayer_all_damage_hint, i18n_get(I18N_ALL_DAMAGE_HINT));
+
+    if (menu_button_mode != NULL) {
+        lv_obj_t *label = lv_obj_get_child(menu_button_mode, 0);
+        if (label != NULL) {
+            lv_label_set_text(label, i18n_get(lv_scr_act() == screen_main ? I18N_MULTIPLAYER : I18N_ONE_PLAYER));
+            style_menu_label(label);
+        }
+    }
+
+    refresh_settings_ui();
+    refresh_multiplayer_menu_ui();
+    refresh_multiplayer_name_ui();
+    refresh_multiplayer_cmd_select_ui();
+    refresh_multiplayer_cmd_damage_ui();
+    refresh_multiplayer_all_damage_ui();
+    refresh_battery_ui();
+    mp_timer_refresh_btn_label();
+}
+
 static void refresh_settings_ui()
 {
     char buf[16];
@@ -771,14 +1025,15 @@ static void refresh_settings_ui()
 
     snprintf(buf, sizeof(buf), "%d%%", brightness_percent);
     if (settings_row_value[0] != NULL) lv_label_set_text(settings_row_value[0], buf);
-    if (settings_row_value[1] != NULL) lv_label_set_text(settings_row_value[1], auto_dim_enabled ? "on" : "off");
-    if (settings_row_value[2] != NULL) lv_label_set_text(settings_row_value[2], mirror_enabled ? "on" : "off");
+    if (settings_row_value[1] != NULL) lv_label_set_text(settings_row_value[1], i18n_get(auto_dim_enabled ? I18N_ON : I18N_OFF));
+    if (settings_row_value[2] != NULL) lv_label_set_text(settings_row_value[2], i18n_get(mirror_enabled ? I18N_ON : I18N_OFF));
     if (settings_row_value[3] != NULL) {
         uint16_t secs = MP_TIMER_OPTIONS[mp_timer_duration_idx];
-        if (secs == 0) lv_label_set_text(settings_row_value[3], "off");
+        if (secs == 0) lv_label_set_text(settings_row_value[3], i18n_get(I18N_OFF));
         else { snprintf(buf, sizeof(buf), "%ds", secs); lv_label_set_text(settings_row_value[3], buf); }
     }
-    if (settings_row_value[4] != NULL) lv_label_set_text(settings_row_value[4], round_table_enabled ? "round" : "rect");
+    if (settings_row_value[4] != NULL) lv_label_set_text(settings_row_value[4], i18n_get(round_table_enabled ? I18N_ROUND : I18N_RECT));
+    if (settings_row_value[5] != NULL) lv_label_set_text(settings_row_value[5], i18n_language_name(i18n_get_language_index()));
 
     refresh_battery_ui();
 }
@@ -929,7 +1184,7 @@ static void refresh_multiplayer_ui()
             if (canvas_mp_name[i] != NULL && canvas_mp_name_buf[i] != NULL) {
                 lv_draw_label_dsc_init(&dsc);
                 dsc.color = player_color;
-                dsc.font  = &lv_font_montserrat_14;
+                dsc.font  = &lv_font_montserrat_14_pt;
                 dsc.align = LV_TEXT_ALIGN_CENTER;
                 memset(canvas_mp_name_buf[i], 0, CMP_NAME_BUF_SIZE);
                 lv_canvas_draw_text(canvas_mp_name[i], 0,
@@ -996,7 +1251,7 @@ static void refresh_multiplayer_ui()
                     multiplayer_cmd_damage_totals[v][cmp_mp_attackers[v][a]]);
                 lv_draw_label_dsc_init(&dsc);
                 dsc.color = lv_color_white();
-                dsc.font  = &lv_font_montserrat_14;
+                dsc.font  = &lv_font_montserrat_14_pt;
                 dsc.align = LV_TEXT_ALIGN_CENTER;
                 memset(canvas_cmd_mp_buf[v][a], 0, CMP_CMD_BUF_SIZE);
                 lv_canvas_draw_text(canvas_cmd_mp[v][a], 0,
@@ -1015,7 +1270,7 @@ static void refresh_multiplayer_menu_ui()
 
     if (label_multiplayer_menu_title == NULL) return;
 
-    snprintf(buf, sizeof(buf), "%s menu", multiplayer_names[multiplayer_menu_player]);
+    snprintf(buf, sizeof(buf), i18n_get(I18N_MENU_FMT), multiplayer_names[multiplayer_menu_player]);
     lv_label_set_text(label_multiplayer_menu_title, buf);
 }
 
@@ -1024,7 +1279,7 @@ static void refresh_multiplayer_name_ui()
     char buf[40];
 
     if (label_multiplayer_name_title != NULL) {
-        snprintf(buf, sizeof(buf), "Rename %s", multiplayer_names[multiplayer_menu_player]);
+        snprintf(buf, sizeof(buf), i18n_get(I18N_RENAME_FMT), multiplayer_names[multiplayer_menu_player]);
         lv_label_set_text(label_multiplayer_name_title, buf);
     }
 
@@ -1040,7 +1295,7 @@ static void refresh_multiplayer_cmd_select_ui()
     int row = 0;
 
     if (label_multiplayer_cmd_select_title != NULL) {
-        snprintf(buf, sizeof(buf), "%s -> target", multiplayer_names[multiplayer_menu_player]);
+        snprintf(buf, sizeof(buf), i18n_get(I18N_TARGET_FMT), multiplayer_names[multiplayer_menu_player]);
         lv_label_set_text(label_multiplayer_cmd_select_title, buf);
     }
 
@@ -1084,7 +1339,7 @@ static void refresh_multiplayer_cmd_damage_ui()
     }
 
     if (label_multiplayer_cmd_damage_value != NULL) {
-        snprintf(value_buf, sizeof(value_buf), "Damage: %d", multiplayer_cmd_damage_totals[multiplayer_cmd_source][multiplayer_cmd_target]);
+        snprintf(value_buf, sizeof(value_buf), i18n_get(I18N_DAMAGE_FMT), multiplayer_cmd_damage_totals[multiplayer_cmd_source][multiplayer_cmd_target]);
         lv_label_set_text(label_multiplayer_cmd_damage_value, value_buf);
     }
 }
@@ -1094,11 +1349,11 @@ static void refresh_multiplayer_all_damage_ui()
     char buf[32];
 
     if (label_multiplayer_all_damage_title != NULL) {
-        lv_label_set_text(label_multiplayer_all_damage_title, "All players");
+        lv_label_set_text(label_multiplayer_all_damage_title, i18n_get(I18N_ALL_PLAYERS));
     }
 
     if (label_multiplayer_all_damage_value != NULL) {
-        snprintf(buf, sizeof(buf), "Damage: %d", multiplayer_all_damage_value);
+        snprintf(buf, sizeof(buf), i18n_get(I18N_DAMAGE_FMT), multiplayer_all_damage_value);
         lv_label_set_text(label_multiplayer_all_damage_value, buf);
     }
 }
@@ -1263,6 +1518,11 @@ static void change_settings_field(int dir)
         refresh_multiplayer_ui();
         mp_timer_update_highlight();
         break;
+    case 5:
+        i18n_set_language_index((i18n_get_language_index() + dir + LANG_COUNT) % LANG_COUNT);
+        settings_dirty = true;
+        refresh_texts_ui();
+        break;
     }
 }
 
@@ -1366,7 +1626,7 @@ static void show_main_menu(void)
             ? lv_obj_get_child(menu_button_mode, 0)
             : NULL;
         if (label != NULL) {
-            lv_label_set_text(label, lv_scr_act() == screen_main ? "Multiplayer" : "1 Player");
+            lv_label_set_text(label, i18n_get(lv_scr_act() == screen_main ? I18N_MULTIPLAYER : I18N_ONE_PLAYER));
         }
         lv_obj_clear_flag(menu_overlay, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(menu_overlay);
@@ -1952,7 +2212,7 @@ static void mp_timer_refresh_btn_label(void)
         lv_obj_set_style_text_color(label_mp_timer_btn, lv_color_hex(0xC4B5FD), 0);
         break;
     case MTIMER_WAITING:
-        snprintf(buf, sizeof(buf), "go P%d", mp_timer_current_player + 1);
+        snprintf(buf, sizeof(buf), i18n_get(I18N_GO_PLAYER_FMT), mp_timer_current_player + 1);
         lv_label_set_text(label_mp_timer_btn, buf);
         lv_obj_set_style_text_color(label_mp_timer_btn, lv_color_hex(0x8B5CF6), 0);
         break;
@@ -1963,7 +2223,7 @@ static void mp_timer_refresh_btn_label(void)
         lv_obj_set_style_text_color(label_mp_timer_btn, lv_color_hex(0xC4B5FD), 0);
         break;
     case MTIMER_EXPIRED:
-        lv_label_set_text(label_mp_timer_btn, "TIME!");
+        lv_label_set_text(label_mp_timer_btn, i18n_get(I18N_TIME_EXPIRED));
         lv_obj_set_style_text_color(label_mp_timer_btn, lv_color_hex(0xEF4444), 0);
         break;
     }
@@ -2243,7 +2503,7 @@ static void build_multiplayer_screen()
             label_multiplayer_name[i] = lv_label_create(screen_multiplayer);
             lv_label_set_text(label_multiplayer_name[i], player_names[i]);
             lv_obj_set_style_text_color(label_multiplayer_name[i], lv_color_white(), 0);
-            lv_obj_set_style_text_font(label_multiplayer_name[i], &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(label_multiplayer_name[i], &lv_font_montserrat_14_pt, 0);
 
             label_multiplayer_life[i] = lv_label_create(screen_multiplayer);
             lv_label_set_text(label_multiplayer_life[i], "40");
@@ -2310,13 +2570,13 @@ static void build_multiplayer_screen()
     label_mp_timer_btn = lv_label_create(btn_mp_timer);
     lv_label_set_text(label_mp_timer_btn, "");
     lv_obj_set_style_text_color(label_mp_timer_btn, lv_color_hex(0x8B5CF6), 0);
-    lv_obj_set_style_text_font(label_mp_timer_btn, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(label_mp_timer_btn, &lv_font_montserrat_14_pt, 0);
     lv_obj_center(label_mp_timer_btn);
 
     refresh_multiplayer_ui();
 
-    lv_obj_t *batt_mp_bg = lv_obj_create(screen_multiplayer);
-    lv_obj_set_size(batt_mp_bg, 84, 36);
+    batt_mp_bg = lv_obj_create(screen_multiplayer);
+    lv_obj_set_size(batt_mp_bg, BATT_BADGE_W, BATT_BADGE_H);
     lv_obj_set_style_bg_color(batt_mp_bg, lv_color_hex(0x0D0B1A), 0);
     lv_obj_set_style_bg_opa(batt_mp_bg, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(batt_mp_bg, lv_color_hex(0x4C1D95), 0);
@@ -2345,6 +2605,9 @@ static void build_multiplayer_screen()
     lv_obj_set_style_text_color(label_multiplayer_battery, lv_color_hex(0xC4B5FD), 0);
     lv_obj_set_style_text_font(label_multiplayer_battery, &lv_font_montserrat_14, 0);
     lv_obj_align(label_multiplayer_battery, LV_ALIGN_TOP_MID, 0, 27);
+    label_multiplayer_battery_charge = make_battery_charge_icon(screen_multiplayer, bar_multiplayer_battery);
+    battery_widgets_to_front(batt_mp_bg, bar_multiplayer_battery,
+                             label_multiplayer_battery, label_multiplayer_battery_charge);
 
     /* Commander damage circles — 34px, 10px gap
        Top row y=128 (18px above center divider): P0 left, P1 right
@@ -2394,7 +2657,7 @@ static void build_multiplayer_screen()
                     /* P2, P3: regular label inside circle */
                     lv_obj_t *lbl = lv_label_create(c);
                     lv_label_set_text(lbl, "0");
-                    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+                    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14_pt, 0);
                     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
                     lv_obj_center(lbl);
                     cmd_mp_label[v][a] = lbl;
@@ -2414,20 +2677,20 @@ static void build_multiplayer_menu_screen()
 
     label_multiplayer_menu_title = lv_label_create(screen_multiplayer_menu);
     lv_obj_set_style_text_color(label_multiplayer_menu_title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label_multiplayer_menu_title, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_font(label_multiplayer_menu_title, UI_FONT_22, 0);
     lv_obj_align(label_multiplayer_menu_title, LV_ALIGN_TOP_MID, 0, 26);
 
-    lv_obj_t *btn = make_button(screen_multiplayer_menu, "Rename", 180, 46, event_multiplayer_menu_rename);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, -36);
+    btn_mp_menu_rename = make_button(screen_multiplayer_menu, i18n_get(I18N_RENAME), 180, 46, event_multiplayer_menu_rename);
+    lv_obj_align(btn_mp_menu_rename, LV_ALIGN_CENTER, 0, -36);
 
-    btn = make_button(screen_multiplayer_menu, "Cmd.dmg", 180, 46, event_multiplayer_menu_cmd_damage);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 24);
+    btn_mp_menu_cmd_dmg = make_button(screen_multiplayer_menu, i18n_get(I18N_CMD_DMG), 180, 46, event_multiplayer_menu_cmd_damage);
+    lv_obj_align(btn_mp_menu_cmd_dmg, LV_ALIGN_CENTER, 0, 24);
 
-    btn = make_button(screen_multiplayer_menu, "All.dmg", 180, 46, event_multiplayer_menu_all_damage);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 84);
+    btn_mp_menu_all_dmg = make_button(screen_multiplayer_menu, i18n_get(I18N_ALL_DMG), 180, 46, event_multiplayer_menu_all_damage);
+    lv_obj_align(btn_mp_menu_all_dmg, LV_ALIGN_CENTER, 0, 84);
 
-    btn = make_button(screen_multiplayer_menu, "Back", 120, 46, event_multiplayer_menu_back);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -26);
+    btn_mp_menu_back = make_button(screen_multiplayer_menu, i18n_get(I18N_BACK), 120, 46, event_multiplayer_menu_back);
+    lv_obj_align(btn_mp_menu_back, LV_ALIGN_BOTTOM_MID, 0, -26);
 }
 
 static void build_multiplayer_name_screen()
@@ -2440,7 +2703,7 @@ static void build_multiplayer_name_screen()
 
     label_multiplayer_name_title = lv_label_create(screen_multiplayer_name);
     lv_obj_set_style_text_color(label_multiplayer_name_title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label_multiplayer_name_title, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_font(label_multiplayer_name_title, UI_FONT_22, 0);
     lv_obj_align(label_multiplayer_name_title, LV_ALIGN_TOP_MID, 0, 18);
 
     textarea_multiplayer_name = lv_textarea_create(screen_multiplayer_name);
@@ -2454,11 +2717,11 @@ static void build_multiplayer_name_screen()
     lv_obj_align(keyboard_multiplayer_name, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_keyboard_set_textarea(keyboard_multiplayer_name, textarea_multiplayer_name);
 
-    lv_obj_t *btn = make_button(screen_multiplayer_name, "Save", 88, 38, event_multiplayer_name_save);
-    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -24, 116);
+    btn_mp_name_save = make_button(screen_multiplayer_name, i18n_get(I18N_SAVE), 88, 38, event_multiplayer_name_save);
+    lv_obj_align(btn_mp_name_save, LV_ALIGN_TOP_RIGHT, -24, 116);
 
-    btn = make_button(screen_multiplayer_name, "Back", 88, 38, event_multiplayer_name_back);
-    lv_obj_align(btn, LV_ALIGN_TOP_LEFT, 24, 116);
+    btn_mp_name_back = make_button(screen_multiplayer_name, i18n_get(I18N_BACK), 88, 38, event_multiplayer_name_back);
+    lv_obj_align(btn_mp_name_back, LV_ALIGN_TOP_LEFT, 24, 116);
 }
 
 static void build_multiplayer_cmd_select_screen()
@@ -2473,7 +2736,7 @@ static void build_multiplayer_cmd_select_screen()
 
     label_multiplayer_cmd_select_title = lv_label_create(screen_multiplayer_cmd_select);
     lv_obj_set_style_text_color(label_multiplayer_cmd_select_title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label_multiplayer_cmd_select_title, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_font(label_multiplayer_cmd_select_title, UI_FONT_22, 0);
     lv_obj_align(label_multiplayer_cmd_select_title, LV_ALIGN_TOP_MID, 0, 22);
 
     for (i = 0; i < (MULTIPLAYER_COUNT - 1); i++) {
@@ -2483,13 +2746,13 @@ static void build_multiplayer_cmd_select_screen()
         lv_obj_add_event_cb(button_multiplayer_cmd_target[i], event_multiplayer_cmd_target_pick, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
         label_multiplayer_cmd_target[i] = lv_label_create(button_multiplayer_cmd_target[i]);
-        lv_obj_set_style_text_font(label_multiplayer_cmd_target[i], &lv_font_montserrat_22, 0);
+        lv_obj_set_style_text_font(label_multiplayer_cmd_target[i], UI_FONT_22, 0);
         lv_obj_set_style_text_color(label_multiplayer_cmd_target[i], lv_color_white(), 0);
         lv_obj_center(label_multiplayer_cmd_target[i]);
     }
 
-    lv_obj_t *btn_back = make_button(screen_multiplayer_cmd_select, "Back", 120, 46, event_multiplayer_cmd_select_back);
-    lv_obj_align(btn_back, LV_ALIGN_BOTTOM_MID, 0, -24);
+    btn_mp_cmd_select_back = make_button(screen_multiplayer_cmd_select, i18n_get(I18N_BACK), 120, 46, event_multiplayer_cmd_select_back);
+    lv_obj_align(btn_mp_cmd_select_back, LV_ALIGN_BOTTOM_MID, 0, -24);
 }
 
 static void build_multiplayer_cmd_damage_screen()
@@ -2502,7 +2765,7 @@ static void build_multiplayer_cmd_damage_screen()
 
     label_multiplayer_cmd_damage_title = lv_label_create(screen_multiplayer_cmd_damage);
     lv_obj_set_style_text_color(label_multiplayer_cmd_damage_title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label_multiplayer_cmd_damage_title, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_font(label_multiplayer_cmd_damage_title, UI_FONT_22, 0);
     lv_obj_align(label_multiplayer_cmd_damage_title, LV_ALIGN_TOP_MID, 0, 26);
 
     label_multiplayer_cmd_damage_value = lv_label_create(screen_multiplayer_cmd_damage);
@@ -2511,13 +2774,13 @@ static void build_multiplayer_cmd_damage_screen()
     lv_obj_align(label_multiplayer_cmd_damage_value, LV_ALIGN_CENTER, 0, -8);
 
     label_multiplayer_cmd_damage_hint = lv_label_create(screen_multiplayer_cmd_damage);
-    lv_label_set_text(label_multiplayer_cmd_damage_hint, "Turn knob for damage");
+    lv_label_set_text(label_multiplayer_cmd_damage_hint, i18n_get(I18N_CMD_DAMAGE_HINT));
     lv_obj_set_style_text_color(label_multiplayer_cmd_damage_hint, lv_color_hex(0x7A6F99), 0);
-    lv_obj_set_style_text_font(label_multiplayer_cmd_damage_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(label_multiplayer_cmd_damage_hint, UI_FONT_14, 0);
     lv_obj_align(label_multiplayer_cmd_damage_hint, LV_ALIGN_CENTER, 0, 38);
 
-    lv_obj_t *btn_back = make_button(screen_multiplayer_cmd_damage, "Back", 120, 46, event_multiplayer_cmd_damage_back);
-    lv_obj_align(btn_back, LV_ALIGN_BOTTOM_MID, 0, -24);
+    btn_mp_cmd_damage_back = make_button(screen_multiplayer_cmd_damage, i18n_get(I18N_BACK), 120, 46, event_multiplayer_cmd_damage_back);
+    lv_obj_align(btn_mp_cmd_damage_back, LV_ALIGN_BOTTOM_MID, 0, -24);
 }
 
 static void build_multiplayer_all_damage_screen()
@@ -2530,7 +2793,7 @@ static void build_multiplayer_all_damage_screen()
 
     label_multiplayer_all_damage_title = lv_label_create(screen_multiplayer_all_damage);
     lv_obj_set_style_text_color(label_multiplayer_all_damage_title, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label_multiplayer_all_damage_title, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_font(label_multiplayer_all_damage_title, UI_FONT_22, 0);
     lv_obj_align(label_multiplayer_all_damage_title, LV_ALIGN_TOP_MID, 0, 26);
 
     label_multiplayer_all_damage_value = lv_label_create(screen_multiplayer_all_damage);
@@ -2539,16 +2802,16 @@ static void build_multiplayer_all_damage_screen()
     lv_obj_align(label_multiplayer_all_damage_value, LV_ALIGN_CENTER, 0, -8);
 
     label_multiplayer_all_damage_hint = lv_label_create(screen_multiplayer_all_damage);
-    lv_label_set_text(label_multiplayer_all_damage_hint, "Turn knob, then apply");
+    lv_label_set_text(label_multiplayer_all_damage_hint, i18n_get(I18N_ALL_DAMAGE_HINT));
     lv_obj_set_style_text_color(label_multiplayer_all_damage_hint, lv_color_hex(0x7A6F99), 0);
-    lv_obj_set_style_text_font(label_multiplayer_all_damage_hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(label_multiplayer_all_damage_hint, UI_FONT_14, 0);
     lv_obj_align(label_multiplayer_all_damage_hint, LV_ALIGN_CENTER, 0, 38);
 
-    lv_obj_t *btn = make_button(screen_multiplayer_all_damage, "Apply", 120, 46, event_multiplayer_all_damage_apply);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -78);
+    btn_mp_all_damage_apply = make_button(screen_multiplayer_all_damage, i18n_get(I18N_APPLY), 120, 46, event_multiplayer_all_damage_apply);
+    lv_obj_align(btn_mp_all_damage_apply, LV_ALIGN_BOTTOM_MID, 0, -78);
 
-    btn = make_button(screen_multiplayer_all_damage, "Back", 120, 46, event_multiplayer_all_damage_back);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -24);
+    btn_mp_all_damage_back = make_button(screen_multiplayer_all_damage, i18n_get(I18N_BACK), 120, 46, event_multiplayer_all_damage_back);
+    lv_obj_align(btn_mp_all_damage_back, LV_ALIGN_BOTTOM_MID, 0, -24);
 }
 
 static void build_main_screen()
@@ -2603,7 +2866,7 @@ static void build_main_screen()
     label_life_delta = lv_label_create(screen_main);
     lv_label_set_text(label_life_delta, "+0");
     lv_obj_set_style_text_color(label_life_delta, lv_color_hex(0x22C55E), 0);
-    lv_obj_set_style_text_font(label_life_delta, &lv_font_montserrat_22, 0);
+    lv_obj_set_style_text_font(label_life_delta, UI_FONT_22, 0);
     lv_obj_align(label_life_delta, LV_ALIGN_CENTER, 118, 10);
     lv_obj_add_flag(label_life_delta, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(label_life_delta, LV_OBJ_FLAG_CLICKABLE);
@@ -2629,45 +2892,44 @@ static void build_main_screen()
 
     /* Side buttons — ArcMind circle style */
     {
-        lv_obj_t *side;
         lv_obj_t *lbl;
 
-        side = make_button(menu_overlay, "Reset", 50, 50, event_menu_reset);
-        lv_obj_set_style_radius(side, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(side, lv_color_hex(0x1A1630), 0);
-        lv_obj_set_style_bg_opa(side, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(side, lv_color_hex(0x4C1D95), 0);
-        lv_obj_set_style_border_width(side, 1, 0);
-        lv_obj_set_style_shadow_width(side, 0, 0);
-        lv_obj_set_style_pad_all(side, 0, 0);
-        lv_obj_align(side, LV_ALIGN_CENTER, -148, 0);
-        lbl = lv_obj_get_child(side, 0);
+        btn_menu_reset = make_button(menu_overlay, i18n_get(I18N_RESET), 50, 50, event_menu_reset);
+        lv_obj_set_style_radius(btn_menu_reset, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(btn_menu_reset, lv_color_hex(0x1A1630), 0);
+        lv_obj_set_style_bg_opa(btn_menu_reset, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(btn_menu_reset, lv_color_hex(0x4C1D95), 0);
+        lv_obj_set_style_border_width(btn_menu_reset, 1, 0);
+        lv_obj_set_style_shadow_width(btn_menu_reset, 0, 0);
+        lv_obj_set_style_pad_all(btn_menu_reset, 0, 0);
+        lv_obj_align(btn_menu_reset, LV_ALIGN_CENTER, -148, 0);
+        lbl = lv_obj_get_child(btn_menu_reset, 0);
         if (lbl) {
-            lv_obj_set_style_text_color(lbl, lv_color_hex(0xB0A3D4), 0);
-            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(0xD8CCFF), 0);
+            lv_obj_set_style_text_font(lbl, UI_FONT_14, 0);
+            lv_obj_set_style_text_opa(lbl, LV_OPA_COVER, 0);
         }
 
-        side = make_button(menu_overlay, "Back", 50, 50, event_menu_back);
-        lv_obj_set_style_radius(side, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(side, lv_color_hex(0x1A1630), 0);
-        lv_obj_set_style_bg_opa(side, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(side, lv_color_hex(0x4C1D95), 0);
-        lv_obj_set_style_border_width(side, 1, 0);
-        lv_obj_set_style_shadow_width(side, 0, 0);
-        lv_obj_set_style_pad_all(side, 0, 0);
-        lv_obj_align(side, LV_ALIGN_CENTER, 148, 0);
-        lbl = lv_obj_get_child(side, 0);
+        btn_menu_back = make_button(menu_overlay, i18n_get(I18N_BACK), 50, 50, event_menu_back);
+        lv_obj_set_style_radius(btn_menu_back, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(btn_menu_back, lv_color_hex(0x1A1630), 0);
+        lv_obj_set_style_bg_opa(btn_menu_back, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(btn_menu_back, lv_color_hex(0x4C1D95), 0);
+        lv_obj_set_style_border_width(btn_menu_back, 1, 0);
+        lv_obj_set_style_shadow_width(btn_menu_back, 0, 0);
+        lv_obj_set_style_pad_all(btn_menu_back, 0, 0);
+        lv_obj_align(btn_menu_back, LV_ALIGN_CENTER, 148, 0);
+        lbl = lv_obj_get_child(btn_menu_back, 0);
         if (lbl) {
-            lv_obj_set_style_text_color(lbl, lv_color_hex(0xB0A3D4), 0);
-            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(0xD8CCFF), 0);
+            lv_obj_set_style_text_font(lbl, UI_FONT_14, 0);
+            lv_obj_set_style_text_opa(lbl, LV_OPA_COVER, 0);
         }
     }
 
     /* Menu items — ArcMind dark card style */
     {
-        lv_obj_t *lbl;
-
-        menu_button_mode = make_button(menu_panel, "Multiplayer", 150, 34, event_menu_toggle_mode);
+        menu_button_mode = make_button(menu_panel, i18n_get(I18N_MULTIPLAYER), 170, 36, event_menu_toggle_mode);
         lv_obj_set_style_bg_color(menu_button_mode, lv_color_hex(0x1E1B3A), 0);
         lv_obj_set_style_bg_opa(menu_button_mode, LV_OPA_COVER, 0);
         lv_obj_set_style_border_color(menu_button_mode, lv_color_hex(0x4C1D95), 0);
@@ -2675,36 +2937,30 @@ static void build_main_screen()
         lv_obj_set_style_radius(menu_button_mode, 8, 0);
         lv_obj_set_style_shadow_width(menu_button_mode, 0, 0);
         lv_obj_set_style_pad_all(menu_button_mode, 0, 0);
-        lv_obj_align(menu_button_mode, LV_ALIGN_TOP_MID, 0, 50);
-        lbl = lv_obj_get_child(menu_button_mode, 0);
-        if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xC4B5FD), 0);
+        lv_obj_align(menu_button_mode, LV_ALIGN_TOP_MID, 0, 48);
+        style_menu_label(lv_obj_get_child(menu_button_mode, 0));
 
-        btn = make_button(menu_panel, "Settings", 150, 34, event_menu_settings);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1B3A), 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(btn, lv_color_hex(0x4C1D95), 0);
-        lv_obj_set_style_border_width(btn, 1, 0);
-        lv_obj_set_style_radius(btn, 8, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 0, 0);
-        lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, 92);
-        lbl = lv_obj_get_child(btn, 0);
-        if (lbl) lv_obj_set_style_text_color(lbl, lv_color_hex(0xC4B5FD), 0);
+        btn_menu_settings = make_button(menu_panel, i18n_get(I18N_SETTINGS), 170, 36, event_menu_settings);
+        lv_obj_set_style_bg_color(btn_menu_settings, lv_color_hex(0x1E1B3A), 0);
+        lv_obj_set_style_bg_opa(btn_menu_settings, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(btn_menu_settings, lv_color_hex(0x4C1D95), 0);
+        lv_obj_set_style_border_width(btn_menu_settings, 1, 0);
+        lv_obj_set_style_radius(btn_menu_settings, 8, 0);
+        lv_obj_set_style_shadow_width(btn_menu_settings, 0, 0);
+        lv_obj_set_style_pad_all(btn_menu_settings, 0, 0);
+        lv_obj_align(btn_menu_settings, LV_ALIGN_TOP_MID, 0, 90);
+        style_menu_label(lv_obj_get_child(btn_menu_settings, 0));
 
-        btn = make_button(menu_panel, "Select 1st Player", 150, 34, event_menu_select_first_player);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1E1B3A), 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(btn, lv_color_hex(0x4C1D95), 0);
-        lv_obj_set_style_border_width(btn, 1, 0);
-        lv_obj_set_style_radius(btn, 8, 0);
-        lv_obj_set_style_shadow_width(btn, 0, 0);
-        lv_obj_set_style_pad_all(btn, 0, 0);
-        lv_obj_align(btn, LV_ALIGN_TOP_MID, 0, 134);
-        lbl = lv_obj_get_child(btn, 0);
-        if (lbl) {
-            lv_obj_set_style_text_color(lbl, lv_color_hex(0xC4B5FD), 0);
-            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-        }
+        btn_menu_select_first = make_button(menu_panel, i18n_get(I18N_SELECT_FIRST_PLAYER), 180, 36, event_menu_select_first_player);
+        lv_obj_set_style_bg_color(btn_menu_select_first, lv_color_hex(0x1E1B3A), 0);
+        lv_obj_set_style_bg_opa(btn_menu_select_first, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(btn_menu_select_first, lv_color_hex(0x4C1D95), 0);
+        lv_obj_set_style_border_width(btn_menu_select_first, 1, 0);
+        lv_obj_set_style_radius(btn_menu_select_first, 8, 0);
+        lv_obj_set_style_shadow_width(btn_menu_select_first, 0, 0);
+        lv_obj_set_style_pad_all(btn_menu_select_first, 0, 0);
+        lv_obj_align(btn_menu_select_first, LV_ALIGN_TOP_MID, 0, 132);
+        style_menu_label(lv_obj_get_child(btn_menu_select_first, 0));
     }
 
     /* Brightness bar + label at bottom of menu panel */
@@ -2719,27 +2975,25 @@ static void build_main_screen()
     lv_obj_set_style_pad_all(menu_brightness_bar, 2, LV_PART_MAIN);
     lv_obj_set_style_bg_color(menu_brightness_bar, lv_color_hex(0x8B5CF6), LV_PART_INDICATOR);
     lv_obj_set_style_radius(menu_brightness_bar, 2, LV_PART_INDICATOR);
-    lv_obj_align(menu_brightness_bar, LV_ALIGN_TOP_MID, 0, 174);
+    lv_obj_align(menu_brightness_bar, LV_ALIGN_TOP_MID, 0, 176);
 
     menu_brightness_label = lv_label_create(menu_panel);
     lv_label_set_text(menu_brightness_label, "30%");
-    lv_obj_set_style_text_color(menu_brightness_label, lv_color_hex(0xC4B5FD), 0);
-    lv_obj_set_style_text_font(menu_brightness_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(menu_brightness_label, lv_color_hex(0xE9E0FF), 0);
+    lv_obj_set_style_text_font(menu_brightness_label, UI_FONT_14, 0);
     lv_obj_align(menu_brightness_label, LV_ALIGN_TOP_MID, 0, 187);
     refresh_menu_brightness_ui();
 
-    {
-        lv_obj_t *batt_main_bg = lv_obj_create(screen_main);
-        lv_obj_set_size(batt_main_bg, 84, 36);
-        lv_obj_set_style_bg_color(batt_main_bg, lv_color_hex(0x0D0B1A), 0);
-        lv_obj_set_style_bg_opa(batt_main_bg, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(batt_main_bg, lv_color_hex(0x4C1D95), 0);
-        lv_obj_set_style_border_width(batt_main_bg, 1, 0);
-        lv_obj_set_style_radius(batt_main_bg, 6, 0);
-        lv_obj_set_style_pad_all(batt_main_bg, 0, 0);
-        lv_obj_clear_flag(batt_main_bg, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_align(batt_main_bg, LV_ALIGN_TOP_MID, 0, 6);
-    }
+    batt_main_bg = lv_obj_create(screen_main);
+    lv_obj_set_size(batt_main_bg, BATT_BADGE_W, BATT_BADGE_H);
+    lv_obj_set_style_bg_color(batt_main_bg, lv_color_hex(0x0D0B1A), 0);
+    lv_obj_set_style_bg_opa(batt_main_bg, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(batt_main_bg, lv_color_hex(0x4C1D95), 0);
+    lv_obj_set_style_border_width(batt_main_bg, 1, 0);
+    lv_obj_set_style_radius(batt_main_bg, 6, 0);
+    lv_obj_set_style_pad_all(batt_main_bg, 0, 0);
+    lv_obj_clear_flag(batt_main_bg, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(batt_main_bg, LV_ALIGN_TOP_MID, 0, 6);
 
     bar_main_battery = lv_bar_create(screen_main);
     lv_obj_set_size(bar_main_battery, 62, 10);
@@ -2760,6 +3014,9 @@ static void build_main_screen()
     lv_obj_set_style_text_color(label_main_battery, lv_color_hex(0xC4B5FD), 0);
     lv_obj_set_style_text_font(label_main_battery, &lv_font_montserrat_14, 0);
     lv_obj_align(label_main_battery, LV_ALIGN_TOP_MID, 0, 27);
+    label_main_battery_charge = make_battery_charge_icon(screen_main, bar_main_battery);
+    battery_widgets_to_front(batt_main_bg, bar_main_battery,
+                             label_main_battery, label_main_battery_charge);
 
     /* Commander damage circles — P2(cyan), P3(yellow), P4(green)
        32px circles, 18px gap, centered at y=256+16=272 (92px below display center)
@@ -2785,14 +3042,14 @@ static void build_main_screen()
             lv_obj_add_event_cb(c, event_cmd_main_circle, LV_EVENT_CLICKED, (void *)(intptr_t)ci);
             lv_obj_t *val_lbl = lv_label_create(c);
             lv_label_set_text(val_lbl, "0");
-            lv_obj_set_style_text_font(val_lbl, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(val_lbl, UI_FONT_14, 0);
             lv_obj_set_style_text_color(val_lbl, lv_color_white(), 0);
             lv_obj_center(val_lbl);
             cmd_main_circle[ci] = c;
             cmd_main_label[ci] = val_lbl;
             lv_obj_t *name_lbl = lv_label_create(screen_main);
             lv_label_set_text(name_lbl, cmd_names[ci]);
-            lv_obj_set_style_text_font(name_lbl, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_font(name_lbl, UI_FONT_14, 0);
             lv_obj_set_style_text_color(name_lbl, lv_color_hex(0x7A6F99), 0);
             lv_obj_align_to(name_lbl, c, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
         }
@@ -2801,8 +3058,7 @@ static void build_main_screen()
 
 static void build_settings_screen()
 {
-    static const char *field_names[SETTINGS_FIELD_COUNT] = {"Brightness", "Auto-dim", "Mirror", "Timer", "Table"};
-    static const lv_coord_t row_offsets_y[SETTINGS_FIELD_COUNT] = {-104, -58, -12, 34, 80};
+    static const lv_coord_t row_offsets_y[SETTINGS_FIELD_COUNT] = {-125, -79, -33, 13, 59, 105};
     lv_obj_t *btn_back;
     lv_obj_t *lbl;
     int i;
@@ -2818,9 +3074,9 @@ static void build_settings_screen()
 
     /* Title */
     label_settings_title = lv_label_create(screen_settings);
-    lv_label_set_text(label_settings_title, "Settings");
+    lv_label_set_text(label_settings_title, i18n_get(I18N_SETTINGS));
     lv_obj_set_style_text_color(label_settings_title, lv_color_hex(0x7A6F99), 0);
-    lv_obj_set_style_text_font(label_settings_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(label_settings_title, UI_FONT_14, 0);
     lv_obj_align(label_settings_title, LV_ALIGN_TOP_MID, 0, 16);
 
     /* Setting rows */
@@ -2844,33 +3100,34 @@ static void build_settings_screen()
         settings_row[i] = row;
 
         lv_obj_t *name_lbl = lv_label_create(row);
-        lv_label_set_text(name_lbl, field_names[i]);
+        lv_label_set_text(name_lbl, i18n_get(settings_field_ids[i]));
         lv_obj_set_style_text_color(name_lbl, lv_color_hex(0xB0A3D4), 0);
-        lv_obj_set_style_text_font(name_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(name_lbl, UI_FONT_14, 0);
         lv_obj_align(name_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+        settings_row_name[i] = name_lbl;
 
         lv_obj_t *val_lbl = lv_label_create(row);
         lv_label_set_text(val_lbl, "---");
         lv_obj_set_style_text_color(val_lbl, lv_color_hex(0x8B5CF6), 0);
-        lv_obj_set_style_text_font(val_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(val_lbl, UI_FONT_14, 0);
         lv_obj_align(val_lbl, LV_ALIGN_RIGHT_MID, 0, 0);
         settings_row_value[i] = val_lbl;
     }
 
     /* Back button */
-    btn_back = make_button(screen_settings, "Back", 150, 34, event_settings_back);
-    lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x1E1B3A), 0);
-    lv_obj_set_style_bg_opa(btn_back, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(btn_back, lv_color_hex(0x4C1D95), 0);
-    lv_obj_set_style_border_width(btn_back, 1, 0);
-    lv_obj_set_style_radius(btn_back, 8, 0);
-    lv_obj_set_style_shadow_width(btn_back, 0, 0);
-    lv_obj_set_style_pad_all(btn_back, 0, 0);
-    lv_obj_align(btn_back, LV_ALIGN_BOTTOM_MID, 0, -14);
-    lbl = lv_obj_get_child(btn_back, 0);
+    btn_settings_back = make_button(screen_settings, i18n_get(I18N_BACK), 150, 34, event_settings_back);
+    lv_obj_set_style_bg_color(btn_settings_back, lv_color_hex(0x1E1B3A), 0);
+    lv_obj_set_style_bg_opa(btn_settings_back, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(btn_settings_back, lv_color_hex(0x4C1D95), 0);
+    lv_obj_set_style_border_width(btn_settings_back, 1, 0);
+    lv_obj_set_style_radius(btn_settings_back, 8, 0);
+    lv_obj_set_style_shadow_width(btn_settings_back, 0, 0);
+    lv_obj_set_style_pad_all(btn_settings_back, 0, 0);
+    lv_obj_align(btn_settings_back, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lbl = lv_obj_get_child(btn_settings_back, 0);
     if (lbl) {
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xC4B5FD), 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_font(lbl, UI_FONT_14, 0);
     }
 
     refresh_settings_ui();
@@ -2895,12 +3152,7 @@ void knob_gui(void)
 
     refresh_main_ui();
     refresh_multiplayer_ui();
-    refresh_multiplayer_menu_ui();
-    refresh_multiplayer_name_ui();
-    refresh_multiplayer_cmd_select_ui();
-    refresh_multiplayer_cmd_damage_ui();
-    refresh_multiplayer_all_damage_ui();
-    refresh_settings_ui();
+    refresh_texts_ui();
 
     intro_timer = lv_timer_create(intro_timer_cb, 2500, NULL);
     life_delta_hide_timer = lv_timer_create(life_delta_hide_cb, 2000, NULL);

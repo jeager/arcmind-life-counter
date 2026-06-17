@@ -8,39 +8,90 @@
 #include "hal/lv_hal.h"
 #include "knob.h"
 
+#if SOC_USB_OTG_SUPPORTED && CONFIG_TINYUSB_ENABLED
+#include "USB.h"
+#endif
+
 static const int BATTERY_ADC_PIN = 1;
-static const float BATTERY_DIVIDER_RATIO = 2.0f;
+/* Waveshare JC3636K518: 200k/100k divider -> Vcell = Vpin * 3 */
+static const float BATTERY_DIVIDER_RATIO = 3.0f;
 static const float BATTERY_CALIBRATION_SCALE = 1.0f;
 static const float BATTERY_CALIBRATION_OFFSET = 0.0f;
 static float battery_voltage_filtered = 0.0f;
 static bool battery_voltage_has_value = false;
+static uint32_t battery_pin_millivolts_last = 0;
+
+static float battery_voltage_from_pin_mv(uint32_t pin_mv)
+{
+  float from_mv = ((float)pin_mv * BATTERY_DIVIDER_RATIO) / 1000.0f;
+  float from_mv_x2 = ((float)pin_mv * 2.0f) / 1000.0f;
+
+  if (from_mv >= 3.0f && from_mv <= 4.35f) {
+    return from_mv;
+  }
+
+  /* Some JC3636K518 clones match ESPHome configs that use multiply: 2.0 */
+  if (from_mv_x2 >= 2.8f && from_mv_x2 <= 4.25f) {
+    return 3.30f + ((from_mv_x2 - 2.80f) * (4.20f - 3.30f) / (4.20f - 2.80f));
+  }
+
+  return from_mv;
+}
+
+static float battery_voltage_from_raw(uint32_t raw_avg)
+{
+  return ((float)raw_avg * 3.3f * BATTERY_DIVIDER_RATIO) / 4095.0f;
+}
 
 extern "C" float knob_read_battery_voltage(void)
 {
-  uint32_t millivolts = 0;
-  uint32_t sum = 0;
-  uint32_t min_sample = UINT32_MAX;
-  uint32_t max_sample = 0;
+  uint32_t sum_raw = 0;
+  uint32_t sum_mv = 0;
+  uint32_t min_raw = UINT32_MAX;
+  uint32_t max_raw = 0;
+  uint32_t min_mv = UINT32_MAX;
+  uint32_t max_mv = 0;
   const int sample_count = 16;
   float measured_voltage = 0.0f;
+  uint32_t avg_raw = 0;
+  uint32_t avg_mv = 0;
 
+  analogReadResolution(12);
   analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
+
   for (int i = 0; i < sample_count; i++) {
-    uint32_t sample = analogReadMilliVolts(BATTERY_ADC_PIN);
-    sum += sample;
-    if (sample < min_sample) min_sample = sample;
-    if (sample > max_sample) max_sample = sample;
-    delayMicroseconds(250);
+    uint32_t sample_raw = (uint32_t)analogRead(BATTERY_ADC_PIN);
+    uint32_t sample_mv = (uint32_t)analogReadMilliVolts(BATTERY_ADC_PIN);
+    sum_raw += sample_raw;
+    sum_mv += sample_mv;
+    if (sample_raw < min_raw) min_raw = sample_raw;
+    if (sample_raw > max_raw) max_raw = sample_raw;
+    if (sample_mv < min_mv) min_mv = sample_mv;
+    if (sample_mv > max_mv) max_mv = sample_mv;
+    delayMicroseconds(300);
   }
 
-  sum -= min_sample;
-  sum -= max_sample;
-  millivolts = sum / (sample_count - 2);
-  if (millivolts == 0) {
+  sum_raw -= min_raw;
+  sum_raw -= max_raw;
+  sum_mv -= min_mv;
+  sum_mv -= max_mv;
+  avg_raw = sum_raw / (sample_count - 2);
+  avg_mv = sum_mv / (sample_count - 2);
+  battery_pin_millivolts_last = avg_mv;
+
+  measured_voltage = battery_voltage_from_pin_mv(avg_mv);
+  if ((avg_mv < 50 && avg_raw > 0) ||
+      (measured_voltage < 2.8f && avg_raw > 0)) {
+    float raw_voltage = battery_voltage_from_raw(avg_raw);
+    if (raw_voltage > measured_voltage) {
+      measured_voltage = raw_voltage;
+    }
+  }
+
+  if (measured_voltage < 0.05f) {
     return 0.0f;
   }
 
-  measured_voltage = (((float)millivolts * BATTERY_DIVIDER_RATIO) / 1000.0f);
   measured_voltage = (measured_voltage * BATTERY_CALIBRATION_SCALE) + BATTERY_CALIBRATION_OFFSET;
 
   if (!battery_voltage_has_value) {
@@ -51,6 +102,19 @@ extern "C" float knob_read_battery_voltage(void)
   }
 
   return battery_voltage_filtered;
+}
+
+extern "C" uint32_t knob_battery_pin_millivolts(void)
+{
+  return battery_pin_millivolts_last;
+}
+
+extern "C" bool knob_usb_power_present(void)
+{
+#if SOC_USB_OTG_SUPPORTED && CONFIG_TINYUSB_ENABLED
+  if ((bool)USB) return true;
+#endif
+  return false;
 }
 
 void setup()
@@ -64,6 +128,9 @@ void setup()
 
   delay(200);
   Serial.begin(115200);
+
+  analogReadResolution(12);
+  analogSetPinAttenuation(BATTERY_ADC_PIN, ADC_11db);
 
   scr_lvgl_init();
   knob_gui();
@@ -81,6 +148,7 @@ void setup()
 void loop()
 {
   knob_process_pending();
+  knob_update_battery();
   uint32_t time_till_next = lv_timer_handler();
 
   if (knob_is_dimmed()) {

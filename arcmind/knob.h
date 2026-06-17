@@ -14,9 +14,12 @@ void knob_cb(lv_event_t *e);
 
 void knob_change(knob_event_t k,int cont);
 void knob_process_pending(void);
+void knob_update_battery(void);
 bool activity_kick(void);
 bool knob_is_dimmed(void);
 float knob_read_battery_voltage(void);
+uint32_t knob_battery_pin_millivolts(void);
+bool knob_usb_power_present(void);
 
 
 #ifdef __cplusplus
