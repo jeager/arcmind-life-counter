@@ -7,6 +7,7 @@
 #include <lvgl.h>
 #include "hal/lv_hal.h"
 #include "knob.h"
+#include "device_license.h"
 
 #if SOC_USB_OTG_SUPPORTED && CONFIG_TINYUSB_ENABLED
 #include "USB.h"
@@ -109,6 +110,41 @@ extern "C" uint32_t knob_battery_pin_millivolts(void)
   return battery_pin_millivolts_last;
 }
 
+extern "C" bool knob_usb_power_present(void);
+
+static char serial_line[192];
+static size_t serial_line_len = 0;
+
+static void device_serial_poll(void)
+{
+  char response[192];
+  bool restart_after;
+
+  while (Serial.available() > 0) {
+    int ch = Serial.read();
+    if (ch < 0) break;
+    if (ch == '\r') continue;
+    if (ch == '\n') {
+      serial_line[serial_line_len] = '\0';
+      restart_after = device_license_handle_command(serial_line, response, sizeof(response));
+      if (response[0] != '\0') {
+        Serial.println(response);
+      }
+      serial_line_len = 0;
+      if (restart_after) {
+        delay(100);
+        esp_restart();
+      }
+      continue;
+    }
+    if (serial_line_len + 1U >= sizeof(serial_line)) {
+      serial_line_len = 0;
+      continue;
+    }
+    serial_line[serial_line_len++] = (char)ch;
+  }
+}
+
 extern "C" bool knob_usb_power_present(void)
 {
 #if SOC_USB_OTG_SUPPORTED && CONFIG_TINYUSB_ENABLED
@@ -147,6 +183,7 @@ void setup()
 
 void loop()
 {
+  device_serial_poll();
   knob_process_pending();
   knob_update_battery();
   uint32_t time_till_next = lv_timer_handler();

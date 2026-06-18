@@ -7,13 +7,16 @@ PORT := $(shell \
 	elif [ -e /dev/cu.usbmodem1101 ]; then echo /dev/cu.usbmodem1101; \
 	fi)
 
-.PHONY: build upload
+.PHONY: build upload register
 
 build:
 	arduino-cli compile --fqbn "$(FQBN)" $(OUTPUT_ARG) $(SKETCH)
 
 upload: _require_port
 	arduino-cli upload --fqbn "$(FQBN)" -p $(PORT) $(SKETCH)
+
+register: _require_port
+	node scripts/register-device.mjs --port $(PORT) $(if $(NOTES),--notes "$(NOTES)",)
 
 _require_port:
 	@test -n "$(PORT)" || { echo "Error: device not found (tried /dev/cu.usbmodem101 and /dev/cu.usbmodem1101)"; exit 1; }

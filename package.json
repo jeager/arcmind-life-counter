@@ -3,9 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "publish-firmware": "node scripts/publish-firmware.mjs"
+    "publish-firmware": "node scripts/publish-firmware.mjs",
+    "register-device": "node scripts/register-device.mjs"
   },
   "dependencies": {
-    "@vercel/blob": "2.3.3"
+    "@supabase/supabase-js": "^2.98.0",
+    "@vercel/blob": "2.3.3",
+    "serialport": "^13.0.0"
   }
 }

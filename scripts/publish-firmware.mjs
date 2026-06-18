@@ -44,7 +44,7 @@ async function main() {
 
   console.log(`Uploading ${basename(filePath)} as ${firmwarePath}`);
   const firmware = await put(firmwarePath, createReadStream(filePath), {
-    access: 'public',
+    access: 'private',
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: 'application/octet-stream',
@@ -61,6 +61,7 @@ async function main() {
     size: fileStat.size,
     sha256: await sha256(filePath),
     publishedAt,
+    access: 'private',
     sourceCommit,
     sourceUrl: `https://github.com/${repository}/commit/${sourceCommit}`,
     workflowRunUrl: `https://github.com/${repository}/actions/runs/${runId}`,

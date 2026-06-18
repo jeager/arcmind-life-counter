@@ -68,6 +68,37 @@ make upload
 `make upload` checks `/dev/cu.usbmodem101` and `/dev/cu.usbmodem1101`.
 Use `arduino-cli board list` and the direct upload command for any other port.
 
+## Factory Registration
+
+Each unit must be registered once after flashing. Registration writes a unique
+device key into NVS and stores a SHA-256 hash of that key in Supabase.
+
+1. Copy `.env.example` to `.env` and set `SUPABASE_URL` plus
+   `SUPABASE_SERVICE_ROLE_KEY` from the ArcMind backend.
+2. Install Node dependencies once with `npm install`.
+3. Flash the firmware with `make upload`.
+4. Register the connected device:
+
+```bash
+make register
+make register NOTES="Felipe"
+```
+
+Unregistered devices boot to a lock screen and cannot download firmware from the
+ArcMind installer. The web installer verifies the device over USB before serving
+a short-lived install token and private firmware image.
+
+### Encryption Notes
+
+- **Distribution:** new firmware blobs are uploaded as private Vercel Blob objects
+  and are only streamed through the authenticated API proxy.
+- **Transport:** the browser installer uses HTTPS plus a signed 15-minute install
+  token tied to a registered device.
+- **On-device secret:** each unit stores a random 256-bit key in NVS namespace
+  `arcmind_lic`. The device proves ownership with HMAC-SHA256 during install.
+- **Stronger hardware protection:** ESP32 flash encryption and Secure Boot can be
+  added later if you need to resist custom firmware being flashed over USB.
+
 ## Automated Firmware Releases
 
 Every commit pushed to `main` runs
